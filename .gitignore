@@ -1,0 +1,9 @@
+.gradle/
+build/
+.tools/
+local.properties
+*.iml
+.idea/
+.DS_Store
+.kotlin/
+docs/screens/*.tmp

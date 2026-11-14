@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="valen_background">#0A0A0B</color>
+    <color name="valen_surface">#121214</color>
+    <color name="valen_icon_background">#0A0A0B</color>
+    <color name="valen_text">#F4F4F5</color>
+</resources>

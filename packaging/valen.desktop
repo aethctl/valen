@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Valen
+GenericName=Music Player
+Comment=A music player for Spotify, YouTube Music and SoundCloud
+# The Debian package (Compose nativeDistributions) installs the launcher here.
+# For a checkout install, use: Exec=valen %U
+Exec=/opt/valen/bin/Valen %U
+Icon=valen
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;player;spotify;youtube;music;soundcloud;
+StartupNotify=true
+StartupWMClass=Valen
+MimeType=x-scheme-handler/valen;
