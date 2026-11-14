@@ -1,0 +1,65 @@
+# NOTICE
+
+Valen is licensed under the GNU General Public License, version 3. See `LICENSE`.
+
+## Orpheon — https://github.com/kota-zo/Orpheon (GPL-3.0)
+
+Valen reuses, with adaptation, the Spotify Web Player playback implementation and the hidden-page
+plumbing of Orpheon (formerly Myspoti), by kota-zo and contributors:
+
+- `libs/api` — the provider-neutral models and player/search contracts (`base/api`).
+- `libs/web` — `PageHost`, `PageBridge`, `PageWatch` and cookie helpers (`base/api-web`).
+- `libs/spotify` — `SpotifyApi`, `SpotifyPlayer`, the GraphQL catalog, `player-bridge.js` and the
+  bridge plumbing (`base/api-spotify`).
+- `libs/engine` — the native playback protocol types referenced by `api-spotify` (`base/engine`).
+- `libs/ytmusic` — the YouTube Music page script, `YtmPage`, `InnerTube` and parsers (`base/api-ytmusic`).
+- `host/desktop` — `CdpHost` / `CdpPageHost` (Chrome DevTools Protocol) (`base/host-cdp`).
+- `host/android` — WebView hosts and the media-session/notification playback service (`base/host-android`).
+
+Every source file carries its SPDX header. Orpheon's authors require credit, retention of notices, and
+that derivative works are published under GPL-3.0 with complete source. Valen complies.
+
+## Mochy Music — https://github.com/realidkroo/Mochy-Music (GPL-3.0)
+
+Valen borrows design and implementation ideas, not files: the tight semi-bold type, the full-bleed
+hero that fades into a black page, superellipse covers that share a curve with the surface holding
+them (`ui/theme/Shapes.kt`, after Mochy's `SmoothCornerShape`), the floating capsule player and tab
+bar, the cover's colours as soft drifting pools behind the player (`ui/components/Ambient.kt`,
+after Mochy's ambient backdrop, including sampling the cover's left and right halves separately and
+stepping the drift at 30 a second), and the sectioned drag-reorder queue. The code in those files is
+Valen's own.
+
+## Orpheon's interface — https://github.com/kota-zo/Orpheon (GPL-3.0)
+
+Beyond the playback code listed above, Valen's interface follows Orpheon's Immersive look: white
+text at alpha steps on a black page, translucent bars with a light edge, white chips, the
+cover-flush quick tile, the bare-glyph transport with a thick seek rail and a remaining-time
+readout, and the cover's colour behind the player. Ideas and measurements, not files.
+
+## NewPipeExtractor — https://github.com/TeamNewPipe/NewPipeExtractor (GPL-3.0)
+
+Valen depends on NewPipeExtractor (`v0.27.1`, from JitPack) to turn a YouTube video id into a stream
+address that actually plays: it solves the player's signature and `n` challenges. It is an
+unmodified library dependency, not vendored source. GPL-3.0, the licence Valen already uses.
+
+## FFmpeg — https://ffmpeg.org (LGPL-2.1-or-later / GPL-2.0-or-later)
+
+Native playback runs `ffplay` from the system's FFmpeg as a separate process; FFmpeg is a runtime
+dependency and is not included in Valen's packages. Valen decodes nothing itself.
+
+## Fonts and icons
+
+- Bricolage Grotesque — SIL Open Font License 1.1.
+- Inter — SIL Open Font License 1.1.
+- Material Symbols Rounded — Apache License 2.0.
+
+## Quackify — reviewed, not reused
+
+Quackify's native Spotify player (`krespot-player`) is marked by its author as proprietary /
+source-available with copying prohibited, and is Android-only. No Quackify code or asset is included.
+
+## Services
+
+Valen is not affiliated with Spotify AB, Google/YouTube, or SoundCloud. Spotify plays through its
+official Web Player and the user's own account; YouTube Music and SoundCloud stream the addresses
+their own APIs hand out to clients. No DRM is circumvented.
