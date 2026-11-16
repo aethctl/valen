@@ -10,7 +10,7 @@ Valen is a music player built once in Kotlin and shipped to Linux and Android: o
 
 ## three services, one queue
 
-![a Spotify card, a YouTube Music card and a SoundCloud card converging into one glass queue](docs/readme/one-queue.svg)
+![a marker line with a drip](docs/readme/divider.svg)
 
 The queue belongs to Valen. The three services are adapters behind one interface, so the UI never knows which service is playing and no service ever gets to invent a queue: Spotify, YouTube Music and SoundCloud each play exactly one track, in the order you put them.
 
@@ -38,12 +38,7 @@ Every page keeps its scroll and an open playlist stays open while the app runs; 
 
 ![home, now playing, lyrics and your week on a phone](docs/readme/screens/phones-a.jpg)
 
-<p align="center"><sub>The same app at 390 × 844 — home, now playing, the words, your week.</sub></p>
-
-![now playing on a wide window: cover and stage](docs/readme/screens/now-playing-desktop.jpg)
-
-<p align="center"><sub>Now playing — the cover, the stage, the queue a gesture away.</sub></p>
-
+![a marker line with a drip](docs/readme/divider.svg)
 <details>
 
 ## the small things
