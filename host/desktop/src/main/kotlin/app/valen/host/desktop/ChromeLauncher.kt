@@ -159,17 +159,26 @@ class ChromeLauncher(
      */
     suspend fun isHeadless(): Boolean? = withContext(Dispatchers.IO) {
         val line = browserCommandLine() ?: return@withContext null
-        line.split(' ').any { it == "--headless" || it.startsWith("--headless=") }
-    }
-
-    /** The command line of the first process answering for [port], when one can be identified. */
-    private fun browserCommandLine(): String? = browserProcesses().firstOrNull()?.let { handle ->
-        runCatching { handle.info().commandLine().orElse("") }.getOrNull()
+        flags(line).any { it == "--headless" || it.startsWith("--headless=") }
     }
 
     /**
-     * Every live process that answers for this launcher's DevTools port: Chrome, Chromium or any
-     * other Chromium-family build, whichever started it.
+     * The command line of the browser itself, when one can be identified. Not its helpers: every
+     * renderer and zygote repeats the launch flags (including the DevTools port) but says nothing
+     * about windows, so only the process without a `--type=` is the browser.
+     */
+    private fun browserCommandLine(): String? = runCatching {
+        ProcessHandle.allProcesses()
+            .filter { isBrowserOnPort(it, "--remote-debugging-port=$port") }
+            .filter { handle -> flags(commandLineOf(handle)).none { it.startsWith("--type=") } }
+            .findFirst()
+            .map { handle -> handle.info().commandLine().orElse("") }
+            .orElse(null)
+    }.getOrNull()
+
+    /**
+     * Every live process belonging to the browser on this launcher's DevTools port - the browser and
+     * its helpers - whichever process started it.
      */
     private fun browserProcesses(): List<ProcessHandle> = runCatching {
         ProcessHandle.allProcesses()
@@ -178,11 +187,16 @@ class ChromeLauncher(
     }.getOrDefault(emptyList())
 
     private fun isBrowserOnPort(handle: ProcessHandle, flag: String): Boolean {
-        val line = runCatching { handle.info().commandLine().orElse("") }.getOrDefault("")
-        if (!line.split(' ').contains(flag)) return false
+        val line = commandLineOf(handle)
+        if (!flags(line).contains(flag)) return false
         val exe = line.substringBefore(' ').substringAfterLast('/')
         return BROWSER_EXECUTABLE.containsMatchIn(exe)
     }
+
+    private fun commandLineOf(handle: ProcessHandle): String =
+        runCatching { handle.info().commandLine().orElse("") }.getOrDefault("")
+
+    private fun flags(line: String): List<String> = line.split(' ')
 
     /**
      * Stops the browser this launcher is talking to, whether it started it or an earlier run left

@@ -1,8 +1,8 @@
 # HANDOFF — Valen
 
-**As of** 2026-11-14, end of the window-scaling pass (Pass 9). The passes before it were the design
-rework (Pass 7), the AppImage rebuild (Pass 8), and before those headless Spotify, unified search
-and source priority.
+**As of** 2026-11-14, end of the sign-in window pass (Pass 10). The passes before it were the
+window-scaling pass (Pass 9), the design rework (Pass 7), the AppImage rebuild (Pass 8), and before
+those headless Spotify, unified search and source priority.
 **Next focus:** the Spotify recovery bug in §2, which this pass did not touch, then the visual
 follow-ups in §4. Read `AGENTS.md` first; it is the durable contract. This file is only the state
 you are inheriting.
@@ -29,7 +29,12 @@ Not a git repo. No branch, no commits: every change below is uncommitted files o
   running: real account, song playing, position advancing, MPRIS correct, CDP reports
   `HeadlessChrome`. `VALEN_CHROME_VISIBLE=1` forces a window.
 - Spotify sign-in opens a visible window through `DesktopHosts.ensureVisible()`; replacing the
-  browser bumps `generation` and invalidates the attached adapter.
+  browser bumps `generation` and invalidates the attached adapter. The browser's mode is read from
+  its process, and a headless one is replaced even when this run did not start it. A sign-in that
+  cannot get a window publishes `SessionState.Unavailable` with the launcher's reason instead of
+  doing nothing. Verified live: a leaked headless Chrome from a killed run → Connect → the old
+  browser stopped, a windowed Chrome on the Spotify login page in its place (`ChromeLauncherTest`
+  covers the process reading and the stop).
 - **Chrome-died watchdog works**: SIGKILL the Spotify Chrome → within ~10 s MPRIS flips to
   Paused and stderr prints
   `valen: Spotify: Spotify's browser was closed. Press play to reopen it.`
