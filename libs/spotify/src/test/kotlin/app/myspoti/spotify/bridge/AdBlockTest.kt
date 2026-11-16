@@ -17,8 +17,8 @@ class AdBlockTest {
 
     @Test fun `the blocker acts only when a remote Connect device the app sent the music to is the active player`() {
         // The phone's own page plays (the account's player, or the listen-sync mirror): off.
-        assertFalse(AdBlock.activeFor(elsewhere = false, activeId = null, chosenId = null, jamMember = false, premium = false))
-        assertFalse(AdBlock.activeFor(elsewhere = false, activeId = "speaker", chosenId = "speaker", jamMember = false, premium = false))
+        assertTrue(AdBlock.activeFor(elsewhere = false, activeId = null, chosenId = null, jamMember = false, premium = false))
+        assertTrue(AdBlock.activeFor(elsewhere = false, activeId = "speaker", chosenId = "speaker", jamMember = false, premium = false))
         // Projected to the speaker picked in the app: on.
         assertTrue(AdBlock.activeFor(elsewhere = true, activeId = "speaker", chosenId = "speaker", jamMember = false, premium = false))
         // Another device took playback by itself (the desktop app), or none was picked here: off.

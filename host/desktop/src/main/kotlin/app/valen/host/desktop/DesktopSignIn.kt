@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 
 /**
@@ -28,6 +30,12 @@ interface SignInTabs {
      * [windowError] then says why, because a Connect that does nothing is a broken button.
      */
     suspend fun ensureVisible(): Boolean
+
+    /** Recovers a closed browser using its existing profile, without opening a login window. */
+    suspend fun ensureBackground(): Boolean
+
+    /** Browser-wide account cookies: checking a session must not depend on a login tab existing. */
+    suspend fun cookieNames(url: String): Set<String>
 
     /** Why the last [ensureVisible] could not open a window, when it could not. */
     val windowError: String?
@@ -74,16 +82,19 @@ abstract class DesktopSignIn(
     override val state: StateFlow<SessionState> = mutableState.asStateFlow()
 
     private var poller: Job? = null
+    private val sessionLock = Mutex()
+    @Volatile private var closed = false
 
     /** One probe of the service, run while the sign-in polls. */
     protected abstract suspend fun probe(): SessionState
 
     /** Runs [probe] now and publishes the answer. */
-    suspend fun refresh(): SessionState {
+    suspend fun refresh(): SessionState = sessionLock.withLock {
         // A browser being launched or replaced has no page to answer yet. Publishing that as a
         // failure would flash "Offline" over a sign-in that is working, so the last answer stands.
-        if (tabs.browserStarting) return mutableState.value
+        if (closed || tabs.browserStarting) return mutableState.value
         val next = try {
+            if (!tabs.ensureBackground()) throw IOException(tabs.windowError ?: "Browser recovery failed")
             probe()
         } catch (e: CancellationException) {
             throw e
@@ -94,13 +105,28 @@ abstract class DesktopSignIn(
         } catch (e: Exception) {
             SessionState.Unavailable(e.message ?: "The sign-in page is not reachable")
         }
-        mutableState.value = next
-        return next
+        if (!closed) mutableState.value = next
+        mutableState.value
+    }
+
+    /** Serialise cookie deletion with probes, so an older probe cannot undo a sign-out. */
+    protected suspend fun signOut(clear: suspend () -> Unit) = sessionLock.withLock {
+        if (closed) return@withLock
+        val next = try {
+            check(tabs.ensureBackground()) { tabs.windowError ?: "Could not reopen the browser to sign out" }
+            clear()
+            SessionState.SignedOut
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            SessionState.Unavailable(e.message ?: "Could not clear the account's cookies; press Retry")
+        }
+        if (!closed) mutableState.value = next
     }
 
     /** Polls until [close]; safe to call more than once. */
     fun startPolling() {
-        if (poller?.isActive == true) return
+        if (closed || poller?.isActive == true) return
         poller = scope.launch {
             while (isActive) {
                 refresh()
@@ -114,8 +140,9 @@ abstract class DesktopSignIn(
         poller = null
     }
 
-    /** Signs out in the browser and stops the poller. */
+    /** Stops observing at app shutdown; the browser's saved cookies are left intact. */
     fun close() {
+        closed = true
         stopPolling()
         mutableState.value = SessionState.SignedOut
     }
@@ -150,30 +177,21 @@ class SpotifySignIn(
         startPolling()
     }
 
-    override suspend fun disconnect() {
-        val host = runCatching { tabs.spotify() }.getOrNull()
+    override suspend fun disconnect() = signOut {
+        val host = tabs.spotify()
         // Leaving the page to accounts.spotify.com/logout was not a sign-out: the Web Player's tab
         // kept the session's cookies, so the next probe (and the next play) was still signed in.
-        val cleared = host != null && runCatching {
-            host.clearCookies(SESSION_URLS)
-            host.navigate(HOME)
-        }.isSuccess
-        if (!cleared) {
-            // Do not claim a sign-out that did not happen; the browser still has the account.
-            mutableState.value = SessionState.Unavailable(
-                "Could not clear Spotify's session in the browser: quit its window and try again",
-            )
-            return
-        }
-        mutableState.value = SessionState.SignedOut
+        host.clearCookies(SESSION_URLS)
+        wasConnected = false
+        host.navigate(HOME)
     }
 
     override suspend fun probe(): SessionState {
-        val host = tabs.spotify()
-        if (ACCOUNT_COOKIE !in host.cookieNames(HOME)) {
+        if (ACCOUNT_COOKIE !in tabs.cookieNames(HOME)) {
             wasConnected = false
             return SessionState.SignedOut
         }
+        val host = tabs.spotify()
         // Signed in, but the tab may still be sitting on Spotify's sign-in page: the login can
         // finish in a page of its own (accounts.spotify.com, a popup) and leave this tab behind.
         // The cookies are now there, so one reload turns this tab into the player the bridge needs.
@@ -288,15 +306,14 @@ class YtMusicSignIn(
         startPolling()
     }
 
-    override suspend fun disconnect() {
-        val page = runCatching { tabs.youtubeMusic() }.getOrNull()
-        runCatching { page?.clear() }
-        runCatching { page?.navigate(HOME) }
-        mutableState.value = SessionState.SignedOut
+    override suspend fun disconnect() = signOut {
+        val page = tabs.youtubeMusic()
+        page.clear()
+        page.navigate(HOME)
     }
 
     override suspend fun probe(): SessionState {
-        val names = tabs.youtubeMusic().cookieNames(ORIGIN)
+        val names = tabs.cookieNames(ORIGIN)
         return if (names.any { it in SIGN_IN_COOKIES }) SessionState.Connected() else SessionState.SignedOut
     }
 
@@ -335,15 +352,14 @@ class SoundCloudSignIn(
         startPolling()
     }
 
-    override suspend fun disconnect() {
-        val page = runCatching { tabs.soundCloud() }.getOrNull()
-        runCatching { page?.clear() }
-        runCatching { page?.navigate(HOME) }
-        mutableState.value = SessionState.SignedOut
+    override suspend fun disconnect() = signOut {
+        val page = tabs.soundCloud()
+        page.clear()
+        page.navigate(HOME)
     }
 
     override suspend fun probe(): SessionState {
-        val names = tabs.soundCloud().cookieNames(ORIGIN)
+        val names = tabs.cookieNames(ORIGIN)
         return if (SIGN_IN_COOKIE in names) SessionState.Connected() else SessionState.SignedOut
     }
 

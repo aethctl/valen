@@ -7,20 +7,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * The ad blocker, for Spotify Connect devices only. It acts while the app sends the music to
+ * The ad blocker refuses bundled ad/tracker hosts for the local Web Player and for Spotify
+ * Connect playback sent to another device. It never acts for Premium accounts.
+ *
+ * The old implementation acted only while the app sends the music to
  * another device of the account through Spotify Connect (a speaker, a TV, a receiver picked in
  * the app's device list), where Spotify plays the songs and their ads on that device itself:
  * the app mutes that device for the break (its RemoteAdMute, the Connect volume command), and the
  * Web Player page that controls it is refused the ad hosts of the bundled list ([isBlocked]).
  *
- * Everywhere else it does nothing: the phone's own page, as the account's player or as the
- * unheard listen-sync mirror, loads exactly what Spotify sends, its ads and the third-party hosts
- * around them included (an ad whose verification or tracking host is refused can stall, and the
- * listen-sync mirror with it). Never on a Premium account, which has none ([AccountPlan]).
+ * Local playback is filtered too; the bundled rules avoid Spotify's own playback and media hosts.
  */
 object AdBlock {
     /**
-     * Whether the blocker acts: another device of the account plays ([elsewhere]), and it is the
+     * Whether the blocker acts locally or on the selected Connect device. Another device of the account plays ([elsewhere]), and it is the
      * one the user sent the music to from the app ([activeId] == [chosenId]); not a Jam's device
      * (`social-connect`) nor a Jam joined as a member ([jamMember], the host's device plays), and
      * never on a Premium account.
@@ -29,8 +29,8 @@ object AdBlock {
         elsewhere: Boolean, activeId: String?, chosenId: String?, jamMember: Boolean,
         premium: Boolean = AccountPlan.isPremium,
     ): Boolean =
-        !premium && elsewhere && activeId != null && activeId == chosenId &&
-            !activeId.startsWith("social-connect") && !jamMember
+        !premium && (!elsewhere || (activeId != null && activeId == chosenId &&
+            !activeId.startsWith("social-connect") && !jamMember))
 
     private val _active = MutableStateFlow(false)
 

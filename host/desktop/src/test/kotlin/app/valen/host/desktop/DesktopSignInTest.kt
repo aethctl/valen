@@ -5,6 +5,9 @@ import app.valen.core.SessionState
 import app.valen.host.cdp.CdpHost
 import app.valen.host.cdp.CdpPageHost
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -13,6 +16,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import java.io.IOException
 
 /**
@@ -20,7 +24,73 @@ import java.io.IOException
  * probe during a sign-in's own browser replacement flashed "Offline" over a working login, and a
  * browser that had died showed the raw `Failed to connect to /127.0.0.1:9333` from the HTTP client.
  */
+@Timeout(10)
 class DesktopSignInTest {
+
+    @Test
+    fun `native accounts are restored from cookies without opening service pages`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val tabs = FakeTabs(false).apply { cookies = setOf("SAPISID", "oauth_token") }
+        try {
+            val youtube = YtMusicSignIn(tabs, scope)
+            val soundcloud = SoundCloudSignIn(tabs, scope)
+            assertEquals(SessionState.Connected(), youtube.refresh())
+            assertEquals(SessionState.Connected(), soundcloud.refresh())
+            // No page exists in FakeTabs: either probe would throw if it tried to reopen one.
+            assertEquals(2, tabs.recoveries)
+            tabs.cookies = emptySet()
+            assertEquals(SessionState.SignedOut, youtube.refresh())
+            assertEquals(SessionState.SignedOut, soundcloud.refresh())
+        } finally { scope.cancel() }
+    }
+
+    @Test
+    fun `a browser that cannot recover is unavailable rather than signed out`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val tabs = FakeTabs(false).apply { backgroundReady = false; cookies = setOf("SAPISID") }
+        try {
+            val signIn = YtMusicSignIn(tabs, scope)
+            assertTrue(signIn.refresh() is SessionState.Unavailable)
+            tabs.backgroundReady = true
+            assertEquals(SessionState.Connected(), signIn.refresh())
+        } finally { scope.cancel() }
+    }
+
+    @Test
+    fun `a failed cookie deletion must not claim a successful signout`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val tabs = FakeTabs(false).apply { cookies = setOf("SAPISID", "oauth_token") }
+        try {
+            for (signIn in listOf(YtMusicSignIn(tabs, scope), SoundCloudSignIn(tabs, scope))) {
+                assertEquals(SessionState.Connected(), signIn.refresh())
+                signIn.disconnect() // The fake page refuses cookie deletion.
+                assertTrue(signIn.state.value is SessionState.Unavailable)
+                assertEquals(SessionState.Connected(), signIn.refresh())
+            }
+        } finally { scope.cancel() }
+    }
+
+    @Test
+    fun `a probe cannot publish an old account after disconnect or shutdown`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val release = CompletableDeferred<Unit>()
+            val signIn = object : DesktopSignIn(FakeTabs(false), scope) {
+                override suspend fun probe(): SessionState { release.await(); return SessionState.Connected() }
+                override suspend fun connect() {}
+                override suspend fun disconnect() = signOut {}
+            }
+            val probe = async(start = CoroutineStart.UNDISPATCHED) { signIn.refresh() }
+            val signout = async(start = CoroutineStart.UNDISPATCHED) { signIn.disconnect() }
+            assertFalse(signout.isCompleted, "deletion waits for the outstanding probe")
+            release.complete(Unit)
+            probe.await()
+            signout.await()
+            assertEquals(SessionState.SignedOut, signIn.state.value)
+            signIn.close()
+            assertEquals(SessionState.SignedOut, signIn.refresh(), "shutdown must not start another probe")
+        } finally { scope.cancel() }
+    }
 
     @Test
     fun `a probe during a browser start keeps the last answer`() = withSignIn(browserStarting = true) { signIn ->
@@ -95,7 +165,12 @@ class DesktopSignInTest {
 
     /** The tabs, as far as [DesktopSignIn] can tell: only the browser's state is ever read here. */
     private class FakeTabs(override val browserStarting: Boolean) : SignInTabs {
+        var cookies: Set<String> = emptySet()
+        var backgroundReady = true
+        var recoveries = 0
         override suspend fun ensureVisible(): Boolean = false
+        override suspend fun ensureBackground(): Boolean { recoveries++; return backgroundReady }
+        override suspend fun cookieNames(url: String): Set<String> = cookies
         override val windowError: String? = null
         override suspend fun spotify(): CdpHost = unsupported()
         override suspend fun youtubeMusic(): CdpPageHost = unsupported()

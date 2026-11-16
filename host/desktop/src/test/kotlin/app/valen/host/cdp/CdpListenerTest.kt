@@ -22,6 +22,7 @@ import okhttp3.Request
 import okhttp3.WebSocket
 import okio.ByteString
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -38,6 +39,27 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * cancelled call look like a broken browser.
  */
 class CdpListenerTest {
+
+    @Test
+    fun `account probes include parent-domain cookies without matching other sites`() {
+        assertTrue(cookieDomainMatches(".youtube.com", "music.youtube.com"))
+        assertTrue(cookieDomainMatches(".spotify.com", "open.spotify.com"))
+        assertTrue(cookieDomainMatches(".soundcloud.com", "soundcloud.com"))
+        assertTrue(cookieDomainMatches("music.youtube.com", "music.youtube.com"))
+        assertFalse(cookieDomainMatches("youtube.com", "music.youtube.com"))
+        assertFalse(cookieDomainMatches(".youtube.com", "notyoutube.com"))
+        assertFalse(cookieDomainMatches(".youtube.com", "youtube.com.example.org"))
+        assertFalse(cookieDomainMatches("accounts.google.com", "music.youtube.com"))
+    }
+
+    @Test
+    fun `closing a tab invalidates its cached connection`() {
+        for (subject in subjects()) {
+            assertTrue(subject.isOpen(), subject.name)
+            subject.shutdown("the page connection failed")
+            assertFalse(subject.isOpen(), subject.name)
+        }
+    }
 
     @Test
     fun `a shutdown fails a command that is already waiting`() = runBlocking {
@@ -165,6 +187,7 @@ class CdpListenerTest {
             val socket = FakeSocket()
             Subject(
                 name = "CdpHost",
+                isOpen = { listener.isOpen },
                 send = { ws -> listener.send(ws, METHOD, JsonObject(emptyMap())) },
                 shutdown = listener::shutdown,
                 messages = listener.messages,
@@ -177,6 +200,7 @@ class CdpListenerTest {
             val socket = FakeSocket()
             Subject(
                 name = "CdpPageHost",
+                isOpen = { listener.isOpen },
                 send = { ws -> listener.send(ws, METHOD, JsonObject(emptyMap())) },
                 shutdown = listener::shutdown,
                 messages = listener.messages,
@@ -198,6 +222,7 @@ class CdpListenerTest {
 
     private class Subject(
         val name: String,
+        val isOpen: () -> Boolean,
         val send: suspend (WebSocket) -> JsonObject,
         val shutdown: (String) -> Unit,
         val messages: SharedFlow<String>,

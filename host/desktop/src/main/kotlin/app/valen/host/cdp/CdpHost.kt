@@ -33,6 +33,8 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.io.IOException
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -50,6 +52,9 @@ class CdpHost private constructor(private val socket: WebSocket, private val lis
      * shared flow keeps the bridge's previous broadcast behaviour.
      */
     override val messages: SharedFlow<String> = listener.messages
+
+    /** False as soon as this tab disconnects, even if the browser still answers HTTP. */
+    val isOpen: Boolean get() = listener.isOpen
 
     /** Suspends until the next page load; the API re-injects the bridge then. */
     suspend fun awaitLoad() { listener.pageLoads.first() }
@@ -183,6 +188,8 @@ class CdpHost private constructor(private val socket: WebSocket, private val lis
         private val pending = HashMap<Int, CompletableDeferred<JsonObject>>()
         private var closed: IllegalStateException? = null
 
+        val isOpen: Boolean get() = synchronized(guard) { closed == null }
+
         val opened = CompletableDeferred<Unit>()
         private val loads = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
         val pageLoads: SharedFlow<Unit> = loads
@@ -302,20 +309,25 @@ class CdpHost private constructor(private val socket: WebSocket, private val lis
             val wsUrl = page["webSocketDebuggerUrl"]!!.jsonPrimitive.content
             val listener = Listener(binding)
             val socket = http.newWebSocket(Request.Builder().url(wsUrl).build(), listener)
-            listener.opened.await()
             val host = CdpHost(socket, listener)
-            host.send("Runtime.enable", buildJsonObject {})
-            host.send("Page.enable", buildJsonObject {})
-            // Focus emulation from the start: the Web Player refuses to load media on an unfocused page.
-            host.send("Emulation.setFocusEmulationEnabled", buildJsonObject { put("enabled", true) })
-            host.send("Runtime.addBinding", buildJsonObject { put("name", binding) })
-            host.send("Fetch.enable", buildJsonObject {
-                put("patterns", buildJsonArray {
-                    AdBlock.hosts.forEach { h -> add(buildJsonObject { put("urlPattern", "*://$h/*") }) }
-                    add(buildJsonObject { put("urlPattern", "*/track-playback/v1/devices") })
+            try {
+                withTimeout(10_000) { listener.opened.await() }
+                host.send("Runtime.enable", buildJsonObject {})
+                host.send("Page.enable", buildJsonObject {})
+                // Focus emulation from the start: the Web Player refuses to load media on an unfocused page.
+                host.send("Emulation.setFocusEmulationEnabled", buildJsonObject { put("enabled", true) })
+                host.send("Runtime.addBinding", buildJsonObject { put("name", binding) })
+                host.send("Fetch.enable", buildJsonObject {
+                    put("patterns", buildJsonArray {
+                        AdBlock.hosts.forEach { h -> add(buildJsonObject { put("urlPattern", "*://$h/*") }) }
+                        add(buildJsonObject { put("urlPattern", "*/track-playback/v1/devices") })
+                    })
                 })
-            })
-            return host
+                return host
+            } catch (e: Throwable) {
+                host.close()
+                throw e
+            }
         }
 
         private val defaultHttp = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build()
@@ -330,8 +342,34 @@ object CdpBrowser {
     private val json = Json { ignoreUnknownKeys = true }
     private val http = OkHttpClient.Builder().readTimeout(10, TimeUnit.SECONDS).build()
 
-    /** The names of the browser's cookies on [domain] (and its subdomains): names only, never their values. */
-    suspend fun cookieNames(cdpUrl: String, domain: String): Set<String> {
+    /** Ask Chrome to flush its profile and exit before a visible/headless replacement. */
+    suspend fun closeBrowser(cdpUrl: String): Boolean {
+        val version = withContext(Dispatchers.IO) {
+            http.newCall(Request.Builder().url("$cdpUrl/json/version").build()).execute().use { it.body.string() }
+        }
+        val url = json.parseToJsonElement(version).jsonObject["webSocketDebuggerUrl"]!!.jsonPrimitive.content
+        val answer = CompletableDeferred<Boolean>()
+        val socket = http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
+            private var sent = false
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                sent = webSocket.send("""{"id":1,"method":"Browser.close"}""")
+                if (!sent) answer.complete(false)
+            }
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val reply = runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
+                if (reply["id"]?.jsonPrimitive?.int == 1) answer.complete(reply["error"] == null)
+            }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { answer.complete(sent) }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { answer.complete(sent) }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                answer.completeExceptionally(t)
+            }
+        })
+        return try { withTimeout(2_000) { answer.await() } } finally { socket.cancel() }
+    }
+
+    /** Account cookie names for [host], including parent-domain cookies; never their values. */
+    suspend fun cookieNames(cdpUrl: String, host: String): Set<String> {
         val version = withContext(Dispatchers.IO) {
             http.newCall(Request.Builder().url("$cdpUrl/json/version").build()).execute().use { it.body.string() }
         }
@@ -339,16 +377,29 @@ object CdpBrowser {
         val answer = CompletableDeferred<String>()
         val socket = http.newWebSocket(Request.Builder().url(ws).build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) { webSocket.send("""{"id":1,"method":"Storage.getCookies"}""") }
-            override fun onMessage(webSocket: WebSocket, text: String) { if (text.startsWith("{\"id\":1")) answer.complete(text) }
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                if (runCatching { json.parseToJsonElement(text).jsonObject["id"]?.jsonPrimitive?.int == 1 }.getOrDefault(false)) {
+                    answer.complete(text)
+                }
+            }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { answer.completeExceptionally(t) }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                answer.completeExceptionally(IOException("The browser closed the cookie connection"))
+            }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                answer.completeExceptionally(IOException("The browser closed the cookie connection"))
+            }
         })
         try {
             val text = withTimeout(10_000) { answer.await() }
-            val cookies = json.parseToJsonElement(text).jsonObject["result"]?.jsonObject?.get("cookies")?.jsonArray.orEmpty()
+            val reply = json.parseToJsonElement(text).jsonObject
+            check(reply["error"] == null) { "The browser could not read the account cookies" }
+            val cookies = reply["result"]?.jsonObject?.get("cookies")?.jsonArray
+                ?: error("The browser did not return account cookies")
             return cookies.mapNotNull { c ->
                 val o = c.jsonObject
-                val d = o["domain"]?.jsonPrimitive?.content?.trimStart('.') ?: return@mapNotNull null
-                if (d == domain || d.endsWith(".$domain")) o["name"]?.jsonPrimitive?.content else null
+                val domain = o["domain"]?.jsonPrimitive?.content ?: return@mapNotNull null
+                if (cookieDomainMatches(domain, host)) o["name"]?.jsonPrimitive?.content else null
             }.toSet()
         } finally { socket.close(1000, null) }
     }
@@ -360,4 +411,12 @@ object CdpBrowser {
                 .execute().use { json.parseToJsonElement(it.body.string()).jsonObject["id"]?.jsonPrimitive?.content }
         }.getOrNull()
     }
+}
+
+/** A cookie for .youtube.com applies to music.youtube.com; a host-only cookie does not. */
+internal fun cookieDomainMatches(domain: String, host: String): Boolean {
+    val cookieHost = domain.removePrefix(".").lowercase(Locale.ROOT)
+    val requestHost = host.lowercase(Locale.ROOT)
+    return cookieHost.isNotEmpty() && (requestHost == cookieHost ||
+        (domain.startsWith('.') && requestHost.endsWith(".$cookieHost")))
 }

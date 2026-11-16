@@ -393,11 +393,7 @@ internal class RetryingProvider(
                         delegate = null
                         attachedTo = null
                         _player.value = _player.value?.copy(isPlaying = false, isBuffering = false)
-                        _session.value = if (quiet) {
-                            SessionState.SignedOut
-                        } else {
-                            SessionState.Unavailable("${id.label}'s browser was closed")
-                        }
+                        _session.value = SessionState.Unavailable("${id.label}'s browser was closed")
                         _events.tryEmit(
                             ProviderEvent.Failed("${id.label}'s browser was closed. Press play to reopen it."),
                         )
@@ -418,8 +414,10 @@ internal class RetryingProvider(
             // window — leaves it talking to a page that no longer exists, while Chrome answers
             // fine. `alive()` cannot see that; the generation can. Either way the adapter is built
             // again, but a replacement keeps the account: only the page is gone.
+            // The health check may silently restart Chrome and advance its generation.
+            val hostAlive = alive()
             val replaced = browser != null && attachedTo != browser.value
-            if (!replaced && alive()) return current
+            if (!replaced && hostAlive) return current
             // The browser behind Spotify was closed, crashed or replaced: forget the adapter and
             // start it again rather than failing every later play.
             lock.withLock {
@@ -431,7 +429,7 @@ internal class RetryingProvider(
                     _player.value = null
                     // The sign-in flow this adapter holds keeps polling, and [session] was copied
                     // from it: a replacement must not turn a signed-in service into "Not connected".
-                    if (!replaced) _session.value = SessionState.SignedOut
+                    if (!replaced) _session.value = SessionState.Unavailable("${id.label}'s browser was closed")
                 }
             }
         }

@@ -1,5 +1,34 @@
 # HANDOFF — Valen
 
+## Desktop session recovery (2026-11-16)
+
+- Closing Chrome's sign-in window now recovers the private browser headlessly with the same
+  profile. `BrowserSession` serialises starts, limits failures to three until explicit Retry, and
+  stops a browser that finishes launching after app shutdown.
+- `DesktopHosts` invalidates dead page sockets as well as replaced browsers. All three account
+  observers start with the browser; native services check browser-wide cookies without opening
+  service pages. Parent-domain cookies match their service subdomains.
+- Disconnect is serialised with account probes and only reports success after deleting cookies.
+  Chrome replacements first use `Browser.close` so pending profile writes can finish.
+- The default flake package now includes the fix as `1.0.0-alpha.1-session-recovery.1`.
+  `nix/session-recovery.nix` compiles the host and `Providers.kt` against the pinned ALPHA-1
+  dependencies and overlays those classes, retaining its launcher/JVM/UI. No local build output
+  or Gradle cache enters the derivation. Remove the overlay once a pinned release contains the fix.
+- Validation: 52 desktop unit tests passed; the optional `DesktopSessionRecoveryTest` also passed
+  separately with Nixpkgs Chrome, a temporary profile and dummy cookies. `createDistributable`
+  produced the updated local binary, smoke-rendered inside the flake's FHS environment. The local
+  jpackage launcher's subprocess warning is recorded separately in `TODO.md`. No real account
+  was used.
+- Package validation: `nix build` and `nix flake check` passed. All 45 focused recovery tests,
+  including the real-Chrome test with dummy cookies, passed against the actual packaged jars
+  inside the final FHS wrapper (not the local main-class build outputs).
+  The normal package launcher rendered Settings with all three services and no provider-loading
+  errors; `ldd` found no missing libraries in the checked launcher, JVM and bundled shared objects
+  inside its FHS environment. The overlay preserves the `Providers.kt` basename so the release's
+  calls to `ProvidersKt` remain valid, with a build assertion for that entry point.
+- Manual follow-up: real logins, closing the last window versus a single service tab, reopening
+  Valen, explicit Disconnect, and Spotify playback after recovery on NixOS and another distro.
+
 **As of** 2026-11-16, end of Pass 29 (§0n: Settings in parts, the mini player over artist pages, "Your week"). Before it: Pass 28 (§0m: the Offline list, songs looked up ahead). Before it: Pass 27 (§0l: single-song downloads, faster downloads). Before it: Pass 26 (§0k: this device and downloads on Android). Before it: Pass 25 (§0j: this device, downloads, Discord). Earlier the same day: Pass 23 (Lyprio's endpoint in both builds, AppImage and APK rebuilt).
 Before it: Pass 22 (§0g: lyrics). Before it: Pass 21 (§0f: artist pages). Before it: Pass 20 (§0e: battery/lag,
 playback that stops, songs kept on disk).
