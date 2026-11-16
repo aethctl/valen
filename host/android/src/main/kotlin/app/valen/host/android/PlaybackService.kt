@@ -53,6 +53,12 @@ class PlaybackService : Service() {
 
     private var foreground = false
     private var lastNotified: PlayerSnapshot? = null
+    // What the session was last told: a snapshot that only moved on as its clock said is not told again.
+    private var lastState: PlayerSnapshot? = null
+    private var lastStateAt = 0L
+    private var lastRate = 1f
+    private var lastQueue: List<Track>? = null
+    private var lastIndex = -2
     private var lastNotifiedCover: Bitmap? = null
     private var coverUrl: String? = null
     private var cover: Bitmap? = null
@@ -123,7 +129,7 @@ class PlaybackService : Service() {
     internal fun publish() = main.post { publishNow() }
 
     /** Applies the pushed queue. Main thread. */
-    internal fun publishQueue() = main.post { applyQueue() }
+    internal fun publishQueue() = main.post { lastQueue = AndroidPlayback.queue; applyQueue() }
 
     /** Ends the session: foreground and notification go, the service stops. */
     internal fun endSession() = main.post {
@@ -157,10 +163,26 @@ class PlaybackService : Service() {
     private fun publishNow() {
         if (!::session.isInitialized) return
         val info = AndroidPlayback.current
-        holdCpu(info?.isPlaying == true)
+        val now = android.os.SystemClock.elapsedRealtime()
+        val rate = AndroidPlayback.rate
+        // The coordinator sends its clock a few times a second; the session extrapolates the
+        // position itself, so it is only told what it could not have guessed.
+        val steady = info != null && foreground && lastNotifiedCover === cover && rate == lastRate &&
+            AndroidPlayback.queue === lastQueue && AndroidPlayback.index == lastIndex &&
+            lastState?.let { onCourse(it, info, now - lastStateAt, rate) } == true
+        if (steady) return
+        lastState = info
+        lastStateAt = now
+        lastRate = rate
+        lastIndex = AndroidPlayback.index
+        // Also while the next song starts (it is looked up over the network with the screen off).
+        holdCpu(info?.isPlaying == true || info?.isBuffering == true)
         applyMetadata(info)
         applyState(info)
-        applyQueue()
+        if (AndroidPlayback.queue !== lastQueue) {
+            lastQueue = AndroidPlayback.queue
+            applyQueue()
+        }
         val renotify = lastNotified?.let { info != null && !sameNotification(it, info) } ?: (info != null)
         if (info?.track?.artworkUrl != coverUrl || (cover == null && !info?.track?.artworkUrl.isNullOrBlank() && coverJob?.isActive != true)) {
             loadCover(info?.track?.artworkUrl)
@@ -199,16 +221,25 @@ class PlaybackService : Service() {
 
     private fun applyState(info: PlayerSnapshot?) {
         val state = when {
-            info?.isBuffering == true && info.isPlaying -> PlaybackStateCompat.STATE_BUFFERING
+            info?.isBuffering == true -> PlaybackStateCompat.STATE_BUFFERING
             info?.isPlaying == true -> PlaybackStateCompat.STATE_PLAYING
             else -> PlaybackStateCompat.STATE_PAUSED
         }
         val active = if (AndroidPlayback.index >= 0) AndroidPlayback.index.toLong() else MediaSessionCompat.QueueItem.UNKNOWN_ID.toLong()
         session.setPlaybackState(PlaybackStateCompat.Builder()
             .setActions(ACTIONS)
-            .setState(state, info?.positionMs ?: 0L, if (info?.isPlaying == true && info.isBuffering.not()) 1f else 0f)
+            .setState(state, info?.positionMs ?: 0L, if (info?.isPlaying == true && info.isBuffering.not()) AndroidPlayback.rate else 0f)
             .setActiveQueueItemId(active)
             .build())
+    }
+
+    /** [next] is [last] carried on by its own clock for [elapsedMs]: same song and state, position within a second and a half. */
+    private fun onCourse(last: PlayerSnapshot, next: PlayerSnapshot, elapsedMs: Long, rate: Float): Boolean {
+        if (last.track?.key != next.track?.key || last.isPlaying != next.isPlaying || last.isBuffering != next.isBuffering ||
+            last.durationMs != next.durationMs || last.error != next.error || last.canSeek != next.canSeek) return false
+        val moving = last.isPlaying && !last.isBuffering
+        val expected = last.positionMs + if (moving) (elapsedMs * rate).toLong() else 0L
+        return kotlin.math.abs(expected - next.positionMs) < DRIFT_MS
     }
 
     private fun applyQueue() {
@@ -244,6 +275,7 @@ class PlaybackService : Service() {
         cover = bitmap
         coverUrl = null
         lastNotified = null
+        lastState = null
         metadataTrack = null
         metadataArt = null
     }
@@ -377,6 +409,8 @@ class PlaybackService : Service() {
     companion object {
         private const val CHANNEL_ID = "playback"
         private const val NOTIFICATION_ID = 1
+        /** How far the position may wander from the session's own clock before it is told again. */
+        private const val DRIFT_MS = 1_500L
         private const val ACTION_PLAY = "app.valen.action.PLAY"
         private const val ACTION_PAUSE = "app.valen.action.PAUSE"
         private const val ACTION_TOGGLE = "app.valen.action.TOGGLE"

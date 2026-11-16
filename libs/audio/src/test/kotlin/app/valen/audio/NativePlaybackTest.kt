@@ -1,12 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 package app.valen.audio
 
+import kotlinx.coroutines.test.runCurrent
 import app.valen.core.AudioQuality
 import app.valen.core.PlayerSnapshot
 import app.valen.core.ProviderEvent
 import app.valen.core.ProviderId
 import app.valen.core.Track
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -148,6 +151,73 @@ class NativePlaybackTest {
         listener.cancel()
     }
 
+    /**
+     * A new song is resolved before its stream starts, and the old ffplay process keeps ticking
+     * for those hundreds of milliseconds. Publishing that tick under the new track showed the new
+     * song playing at the old song's position — the app asked for a song and the stage jumped.
+     */
+    @Test
+    fun `a tick from the previous stream does not move the new song`() = runTest {
+        val player = FakePlayer()
+        val scope = CoroutineScope(UnconfinedTestDispatcher(testScheduler))
+        val gate = CompletableDeferred<Unit>()
+        var resolves = 0
+        val playback = NativePlayback(player, scope) { _, _ ->
+            // The first song plays at once; the second one is still resolving while the old
+            // stream keeps ticking.
+            if (++resolves > 1) gate.await()
+            ResolvedStream("https://example.test/b")
+        }
+
+        playback.play(track, 0)
+        player.emit(AudioState(hasStream = true, playing = true, positionMs = 1_000, durationMs = 213_886))
+        assertEquals(1_000, playback.snapshot.value?.positionMs)
+
+        val next = track.copy(id = "294", title = "Another", uri = "soundcloud:track:294")
+        val job = launch(UnconfinedTestDispatcher(testScheduler)) { playback.play(next, 0) }
+        // Still resolving: this is the old stream's clock.
+        player.emit(AudioState(hasStream = true, playing = true, positionMs = 2_000, durationMs = 213_886))
+        assertEquals(next, playback.snapshot.value?.track, "the new song is the one on show")
+        assertEquals(0, playback.snapshot.value?.positionMs, "the old stream's clock moved the new song")
+
+        gate.complete(Unit)
+        job.join()
+        assertEquals(next, playback.snapshot.value?.track)
+        assertEquals(0, playback.snapshot.value?.positionMs)
+        assertTrue(playback.snapshot.value?.isPlaying == true, "the resolved stream is playing")
+        assertFalse(playback.snapshot.value?.isBuffering == true, "still buffering once the stream started")
+        scope.cancel()
+    }
+
+    @Test
+    fun `a song that cannot be resolved stops the previous stream and keeps its failure`() = runTest {
+        val player = FakePlayer()
+        val scope = CoroutineScope(UnconfinedTestDispatcher(testScheduler))
+        var resolves = 0
+        val playback = NativePlayback(player, scope) { _, _ ->
+            if (++resolves == 1) ResolvedStream("https://example.test/a")
+            else throw IllegalStateException("no stream for this track")
+        }
+
+        playback.play(track, 0)
+        player.emit(AudioState(hasStream = true, playing = true, positionMs = 1_000, durationMs = 213_886))
+
+        val next = track.copy(id = "294", title = "Another", uri = "soundcloud:track:294")
+        runCatching { playback.play(next, 0) }
+
+        assertFalse(player.state.value.hasStream, "the previous stream was left running")
+        val snapshot = playback.snapshot.value!!
+        assertEquals(next, snapshot.track)
+        assertEquals("no stream for this track", snapshot.error)
+        assertFalse(snapshot.isPlaying, "a song that failed is not reported as playing")
+
+        // What the stopped sink reports next must not clear the reason the song failed.
+        player.emit(AudioState())
+        assertEquals("no stream for this track", playback.snapshot.value?.error)
+        assertEquals(next, playback.snapshot.value?.track)
+        scope.cancel()
+    }
+
     @Test
     fun `volume reaches the sink and the snapshot`() = runTest {
         val player = FakePlayer()
@@ -161,5 +231,24 @@ class NativePlaybackTest {
         assertEquals(0.35f, player.volume)
         assertEquals(0.35f, playback.snapshot.value?.volume)
         scope.cancel()
+    }
+
+    @Test
+    fun `a warm-up and the tap after it share one look-up`() = runTest {
+        var asked = 0
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val playback = NativePlayback(FakePlayer(), backgroundScope) { id, _ ->
+            asked++
+            gate.await()
+            ResolvedStream("https://example.invalid/$id")
+        }
+        val warm = launch { playback.warm(track) }
+        runCurrent()
+        val play = launch { playback.play(track, 0) }
+        runCurrent()
+        gate.complete(Unit)
+        warm.join()
+        play.join()
+        assertEquals(1, asked, "the play waited for the warm-up's answer")
     }
 }

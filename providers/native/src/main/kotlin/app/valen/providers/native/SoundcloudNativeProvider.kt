@@ -5,10 +5,16 @@ import app.valen.audio.NativePlayback
 import app.valen.audio.SoundcloudAudio
 import app.valen.core.AudioQuality
 import app.valen.core.MusicProvider
+import app.valen.core.PlaylistCatalog
+import app.valen.core.PlaylistLink
+import app.valen.core.PlaylistRef
 import app.valen.core.PlayerSnapshot
 import app.valen.core.ProviderEvent
 import app.valen.core.ProviderId
+import app.valen.core.EffectSupport
+import app.valen.core.SoundEffects
 import app.valen.core.ProviderSignIn
+import app.valen.core.ReadPlaylist
 import app.valen.core.SessionState
 import app.valen.core.Track
 import kotlinx.coroutines.flow.SharedFlow
@@ -25,9 +31,19 @@ class SoundcloudNativeProvider(
     private val signIn: ProviderSignIn,
     private val playback: NativePlayback,
     private val audio: SoundcloudAudio,
-) : MusicProvider {
+    /** The account's OAuth token from the page's cookie, when one is signed in; never stored. */
+    oauth: (suspend () -> String?)? = null,
+) : MusicProvider, PlaylistCatalog {
 
     override val id: ProviderId = ProviderId.SOUNDCLOUD
+
+    private val catalog = SoundcloudPlaylistCatalog(audio, oauth)
+
+    override val provider: ProviderId get() = id
+
+    override suspend fun playlists(): List<PlaylistRef> = catalog.playlists()
+
+    override suspend fun read(link: PlaylistLink): ReadPlaylist = catalog.read(link)
 
     override val session: StateFlow<SessionState> get() = signIn.state
 
@@ -41,17 +57,7 @@ class SoundcloudNativeProvider(
 
     override suspend fun search(query: String, limit: Int): List<Track> {
         if (query.isBlank() || limit <= 0) return emptyList()
-        return audio.search(query.trim(), limit).map { row ->
-            Track(
-                provider = ProviderId.SOUNDCLOUD,
-                id = row.id,
-                title = row.title,
-                artist = row.artist,
-                artworkUrl = row.artworkUrl,
-                durationMs = row.durationMs,
-                uri = "soundcloud:track:${row.id}",
-            )
-        }
+        return audio.search(query.trim(), limit).map { it.toValenTrack() }
     }
 
     override suspend fun play(track: Track, startMs: Long) = playback.play(track, startMs)
@@ -63,6 +69,20 @@ class SoundcloudNativeProvider(
     override suspend fun seek(positionMs: Long) = playback.seek(positionMs)
 
     override suspend fun setVolume(volume: Float) = playback.setVolume(volume)
+
+    /** FFmpeg applies the effects; without ffplay nothing plays here at all. */
+    override val effectSupport: EffectSupport
+        get() = if (playback.takesEffects) EffectSupport.Full else EffectSupport.None("Needs FFmpeg's ffplay")
+
+    override suspend fun setEffects(effects: SoundEffects) = playback.setEffects(effects)
+
+    /** Another service's song starts: this one's stream is let go, not left paused and open. */
+    override suspend fun stop() = playback.stop()
+
+    /** Finds the next song's stream now, so it starts without a gap. */
+    override suspend fun prepare(track: Track) = playback.prepare(track)
+    override suspend fun warm(track: Track) = playback.warm(track)
+    override fun isCached(track: Track): Boolean = playback.isCached(track)
 
     override suspend fun setQuality(quality: AudioQuality) = playback.setQuality(quality)
 

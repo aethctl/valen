@@ -46,13 +46,16 @@ fun NoticeToast(
             onDismiss()
         }
     }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    GlassSurface(
+        shape = Radii.cardShape,
+        corner = Radii.card * 0.62f,
         modifier = modifier
             .widthIn(max = 560.dp)
-            .heightIn(min = 48.dp)
-            .glass(Radii.cardShape)
-            .padding(start = Space.step4, end = if (confirmation) Space.step5 else Space.step1),
+            .heightIn(min = 48.dp),
+    ) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(start = Space.step4, end = if (confirmation) Space.step5 else Space.step1),
     ) {
         Icon(
             imageVector = if (confirmation) Icons.Rounded.Check else Icons.Rounded.ErrorOutline,
@@ -71,6 +74,7 @@ fun NoticeToast(
         if (!confirmation) {
             IconTap(icon = Icons.Rounded.Close, label = "Dismiss", onClick = onDismiss, iconSize = 18.dp)
         }
+    }
     }
 }
 

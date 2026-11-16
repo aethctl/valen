@@ -90,6 +90,54 @@ object TrackType {
 }
 
 /**
+ * The song's words on the stage, in the music's voice (Inter, never Bricolage: lyrics arrive in
+ * any script). Large and tight so a line reads from across a room; backing vocals sit under their
+ * line, smaller and in the medium weight.
+ */
+object LyricType {
+    /** A sung line on a wide stage. */
+    val line: TextStyle
+        @Composable @ReadOnlyComposable
+        get() = MaterialTheme.typography.titleLarge.copy(fontSize = 34.sp, lineHeight = 42.sp, letterSpacing = (-0.035).em)
+
+    /** A sung line on a phone or a narrow stage. */
+    val lineCompact: TextStyle
+        @Composable @ReadOnlyComposable
+        get() = MaterialTheme.typography.titleLarge.copy(fontSize = 26.sp, lineHeight = 32.sp, letterSpacing = (-0.03).em)
+
+    /** Backing vocals under their line. */
+    val backing: TextStyle
+        @Composable @ReadOnlyComposable
+        get() = MaterialTheme.typography.bodyLarge.copy(fontSize = 21.sp, lineHeight = 26.sp, letterSpacing = (-0.02).em)
+
+    val backingCompact: TextStyle
+        @Composable @ReadOnlyComposable
+        get() = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, lineHeight = 22.sp, letterSpacing = (-0.015).em)
+
+    /** Words that are not timed to the song, read like a page. */
+    val plain: TextStyle
+        @Composable @ReadOnlyComposable
+        get() = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp, lineHeight = 30.sp, letterSpacing = (-0.025).em)
+}
+
+/**
+ * "Your week": a poster's own sizes, in the app's voice (Bricolage). They are set for the poster's
+ * design width ([Layout.storyDesignWidth]); the poster scales as a whole, so they read the same on
+ * a phone and on a wide window.
+ */
+object RecapType {
+    /** The one big number of a page ("11 h 6 min", "23"). */
+    val figure: TextStyle
+        @Composable @ReadOnlyComposable
+        get() = MaterialTheme.typography.displayLarge.copy(fontSize = 72.sp, lineHeight = 70.sp, letterSpacing = (-0.045).em)
+
+    /** The story's title on its first page. */
+    val title: TextStyle
+        @Composable @ReadOnlyComposable
+        get() = MaterialTheme.typography.displayLarge.copy(fontSize = 66.sp, lineHeight = 62.sp, letterSpacing = (-0.04).em)
+}
+
+/**
  * Times and counts: tabular figures, so a ticking position never shifts the text beside it.
  * [large] for the stage, where the times sit under a thick rail and are read from further away.
  */

@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace = "app.valen.host.android"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         minSdk = 29
@@ -19,6 +19,12 @@ dependencies {
     api(project(":core"))
     api(project(":libs:web"))
     api(project(":libs:spotify"))
+    // YouTube Music and SoundCloud play natively, as on the desktop: the same resolvers and
+    // NativePlayback, with ExoPlayer as the sink (and Valen's effects inside its audio chain).
+    api(project(":libs:audio"))
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.exoplayer.hls)
+    implementation(libs.media3.datasource.okhttp)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.webkit)
     implementation(libs.androidx.media)

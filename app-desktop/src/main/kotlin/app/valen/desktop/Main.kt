@@ -21,11 +21,19 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import app.valen.core.PlaybackCoordinator
+import app.valen.core.PlaylistCatalog
+import app.valen.core.PlaylistLibrary
+import app.valen.core.PlaylistManager
+import app.valen.core.PlaylistStore
 import app.valen.core.ProviderId
+import app.valen.core.SessionState
+import app.valen.core.ListeningStats
+import app.valen.core.ListeningStore
 import app.valen.core.SettingsStore
 import app.valen.core.Track
 import app.valen.core.distinctRecordings
 import app.valen.host.desktop.DesktopHosts
+import app.valen.host.desktop.DiscordPresence
 import app.valen.host.desktop.MprisService
 import app.valen.ui.Route
 import app.valen.ui.ValenApp
@@ -74,6 +82,10 @@ private fun windowRun(cli: Cli) {
         val windowState = rememberWindowState(size = DpSize(cli.width.dp, cli.height.dp))
 
         fun shutdown() {
+            // The last seconds of listening are on disk before anything closes.
+            boot?.coordinator?.stats?.flush()
+            // The queue and the place in the song, so the next start picks up there.
+            boot?.coordinator?.saveSession()
             boot?.mpris?.close()
             hosts.close()
             scope.cancel()
@@ -85,7 +97,16 @@ private fun windowRun(cli: Cli) {
             status = "Starting the players…"
             val built = buildProvidersOrNothing(hosts, scope)
             status = "Starting the player…"
-            val coordinator = PlaybackCoordinator(built.providers, scope, settings)
+            val presence = DiscordPresence(scope)
+            val coordinator = PlaybackCoordinator(
+                built.providers, scope, settings,
+                stats = ListeningStats(listeningStore()),
+                lyrics = desktopLyrics(built.providers),
+                offline = built.shelf,
+                presence = presence,
+            )
+            val playlists = buildPlaylists(built, coordinator)
+            presence.start(coordinator)
             val mpris = MprisService(coordinator, scope)
             if (!mpris.start()) System.err.println("valen: MPRIS unavailable: ${mpris.lastError}")
 
@@ -93,7 +114,7 @@ private fun windowRun(cli: Cli) {
             // outcome, so a placeholder reason is not worth a line at every start.
             built.failures.filterKeys { it != ProviderId.SPOTIFY }
                 .forEach { (id, reason) -> System.err.println("valen: ${id.label} unavailable: $reason") }
-            boot = Boot(coordinator, mpris, built)
+            boot = Boot(coordinator, playlists, mpris, built)
         }
 
         Window(
@@ -109,7 +130,7 @@ private fun windowRun(cli: Cli) {
             if (ready == null) {
                 Starting(status)
             } else {
-                ValenApp(ready.coordinator, cli.route.name, cli.query)
+                ValenApp(ready.coordinator, ready.playlists, cli.route.name, cli.query)
             }
         }
     }
@@ -158,16 +179,22 @@ private fun screenshotRun(cli: Cli) {
     val hosts = DesktopHosts(scope)
     val path = cli.screenshot ?: return
 
-    val coordinator = runBlocking {
+    val (coordinator, playlists) = runBlocking {
         // Screenshots show the settled app: Chrome is given the head start a real run gets from
         // working on the native providers first.
         val chromeUp = runCatching { withContext(Dispatchers.IO) { hosts.start() } }.getOrDefault(false)
         if (!chromeUp) System.err.println("valen: Spotify's Chrome is not running: ${hosts.startError ?: "unknown reason"}")
         val built = buildProvidersOrNothing(hosts, scope)
         built.failures.forEach { (id, reason) -> System.err.println("valen: ${id.label} unavailable: $reason") }
-        val coordinator = PlaybackCoordinator(built.providers, scope, settingsStore())
+        val coordinator = PlaybackCoordinator(
+            built.providers, scope, settingsStore(),
+            stats = ListeningStats(listeningStore()),
+            lyrics = desktopLyrics(built.providers),
+            offline = built.shelf,
+            presence = DiscordPresence(scope),
+        )
         cli.play?.let { play(coordinator, it) }
-        coordinator
+        coordinator to buildPlaylists(built, coordinator)
     }
     if (cli.query != null && cli.route != Route.Search) {
         System.err.println("valen: --query fills the search field; add --route search to open it")
@@ -175,7 +202,7 @@ private fun screenshotRun(cli: Cli) {
 
     // A short breath for the last provider work, then Capture draws while real time moves on.
     Thread.sleep(400)
-    val ok = Capture.render(coordinator, cli.route, cli.width, cli.height, path, cli.query)
+    val ok = Capture.render(coordinator, playlists, cli.route, cli.width, cli.height, path, cli.query)
 
     hosts.close()
     scope.cancel()
@@ -185,6 +212,7 @@ private fun screenshotRun(cli: Cli) {
 /** Everything one run of the app holds. */
 private class Boot(
     val coordinator: PlaybackCoordinator,
+    val playlists: PlaylistManager,
     val mpris: MprisService?,
     val providers: ProviderSet,
 )
@@ -232,9 +260,74 @@ private fun Starting(status: String) {
 }
 
 /**
+ * The playlist library: what the person keeps, so it lives with the app's data
+ * (`$XDG_DATA_HOME/valen/playlists.json`, default `~/.local/share/valen/playlists.json`).
+ *
+ * The importer asks each service for a song's copy on that service only when the stored copy
+ * cannot be played here. Spotify counts as playable while its own session says it is connected;
+ * the two native services need no account to play, only a built adapter.
+ */
+private fun buildPlaylists(providers: ProviderSet, coordinator: PlaybackCoordinator): PlaylistManager {
+    val library = PlaylistLibrary(playlistStore(), clock = { System.currentTimeMillis() })
+    providers.attach(library)
+    // "Offline": every song downloaded or kept whole by the song cache, while there is one.
+    app.valen.core.OfflineList(
+        coordinator,
+        library,
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default),
+    ).start()
+    return PlaylistManager(
+        library = library,
+        catalogs = providers.providers.filterIsInstance<PlaylistCatalog>(),
+        search = { provider, query, limit ->
+            coordinator.provider(provider)?.search(query, limit) ?: emptyList()
+        },
+        // A downloaded song plays whatever its service says; any other needs its service (Spotify
+        // only signed in).
+        playable = { track ->
+            coordinator.isKept(track) || (coordinator.provider(track.provider) != null &&
+                (track.provider != ProviderId.SPOTIFY ||
+                    coordinator.sessions.value[track.provider] is SessionState.Connected))
+        },
+        priority = { coordinator.priorityOrder() },
+    )
+}
+
+private fun playlistStore(): PlaylistStore {
+    val home = System.getProperty("user.home")
+    val data = System.getenv("XDG_DATA_HOME")?.takeIf { it.isNotBlank() }?.let { Paths.get(it) }
+        ?: Paths.get(home, ".local", "share")
+    val file: Path = data.resolve("valen").resolve("playlists.json")
+    return PlaylistStore(
+        read = { if (Files.exists(file)) Files.readString(file) else null },
+        write = { text ->
+            Files.createDirectories(file.parent)
+            Files.writeString(file, text)
+        },
+    )
+}
+
+/**
  * Settings live where a Linux app keeps them: `$XDG_CONFIG_HOME/valen/settings.json`, default
  * `~/.config/valen/settings.json`.
  */
+/**
+ * The listening counted for the profile's stats: `$XDG_DATA_HOME/valen/listening.json`, default
+ * `~/.local/share/valen/listening.json`, beside the playlists.
+ */
+private fun listeningStore(): ListeningStore {
+    val data = System.getenv("XDG_DATA_HOME")?.takeIf { it.isNotBlank() }?.let { Paths.get(it) }
+        ?: Paths.get(System.getProperty("user.home"), ".local", "share")
+    val file: Path = data.resolve("valen").resolve("listening.json")
+    return ListeningStore(
+        read = { if (Files.exists(file)) Files.readString(file) else null },
+        write = { text ->
+            Files.createDirectories(file.parent)
+            Files.writeString(file, text)
+        },
+    )
+}
+
 private fun settingsStore(): SettingsStore {
     val home = System.getProperty("user.home")
     val config = System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() }?.let { Paths.get(it) }

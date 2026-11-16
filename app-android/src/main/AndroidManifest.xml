@@ -7,6 +7,17 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Downloads keep going off screen, in a data-sync service with its own notification. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- The phone's own songs and playlist files, asked for only when "From this device" is used. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- Android 10 alone needs it to put downloads in the shared Music folder. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
 
     <application
         android:name=".ValenApplication"
@@ -16,7 +27,8 @@
         android:theme="@style/Theme.Valen"
         android:supportsRtl="true"
         android:enableOnBackInvokedCallback="true"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:requestLegacyExternalStorage="true">
 
         <activity
             android:name=".MainActivity"
@@ -37,5 +49,11 @@
             android:name="app.valen.host.android.PlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- A playlist download, while one runs. -->
+        <service
+            android:name="app.valen.host.android.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

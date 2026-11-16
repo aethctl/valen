@@ -32,8 +32,8 @@ import app.valen.ui.theme.Space
 import app.valen.ui.theme.ValenColors
 
 /**
- * The one filled action in an area: white with black ink, never an accent colour, so it reads the
- * same over the black page and over any artwork wash.
+ * The one filled action in an area, in the one colour: the scheme's soft primary with dark ink,
+ * like Material's filled button.
  */
 @Composable
 fun PrimaryButton(
@@ -51,13 +51,13 @@ fun PrimaryButton(
         enabled = enabled,
         icon = icon,
         small = small,
-        rest = ValenColors.Text,
-        lifted = ValenColors.Text.copy(alpha = 0.86f),
-        content = ValenColors.OnLight,
+        rest = ValenColors.Primary,
+        lifted = ValenColors.Primary.copy(alpha = 0.86f),
+        content = ValenColors.OnPrimary,
     )
 }
 
-/** A second action beside a primary one: a translucent white fill, white ink. */
+/** A second action beside a primary one: the tonal container, like Material's tonal button. */
 @Composable
 fun QuietButton(
     label: String,
@@ -75,8 +75,8 @@ fun QuietButton(
         enabled = enabled,
         icon = icon,
         small = small,
-        rest = ValenColors.Fill,
-        lifted = ValenColors.FillStrong,
+        rest = ValenColors.Container.copy(alpha = 0.7f),
+        lifted = ValenColors.Container,
         content = contentColor,
     )
 }

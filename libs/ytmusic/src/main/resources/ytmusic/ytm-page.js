@@ -26,7 +26,6 @@
     if (window.__mspReannounce) { window.__mspReannounce = false; window.MyspotiPage.announce(); }
     return;
   }
-  const gen = window.__mspPageGen;
   // Valen's page is audible: full volume, so nothing the page does can clamp the app's own volume.
   const SILENT = 1.0;
   const OPEN_CHECK_MS = 4000;
@@ -147,7 +146,10 @@
   };
 
   const announce = () => post({
-    type: 'ready', page: gen, signedIn: cfg('LOGGED_IN') === true,
+    // The generation of the latest injection into this document: Android's WebView reports a page
+    // load again for the web app's own in-page navigations, and an announce with the first
+    // injection's number was refused by the bridge forever after (the page never became ready).
+    type: 'ready', page: window.__mspPageGen, signedIn: cfg('LOGGED_IN') === true,
     clientVersion: cfg('INNERTUBE_CLIENT_VERSION') || null, hl: cfg('HL') || null, gl: cfg('GL') || null,
   });
 

@@ -29,6 +29,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.valen.core.Track
+import app.valen.ui.menu.MenuOrigin
+import app.valen.ui.menu.MoreButton
+import app.valen.ui.menu.rememberSongMenuOpener
+import app.valen.ui.menu.songMenuOnRightClick
 import app.valen.ui.theme.Motion
 import app.valen.ui.theme.Radii
 import app.valen.ui.theme.Space
@@ -101,8 +105,17 @@ fun ShelfCard(
     Column(
         modifier = modifier
             .width(size)
+            .pasted(seed = track.key.hashCode(), source = source)
+            .hoverLift(source)
             .pressScale(source)
-            .tap(onClick = onClick, shape = Radii.cardShape, source = source, rest = ValenColors.Background),
+            .songMenuOnRightClick(track, MenuOrigin.Song)
+            .tap(
+                onClick = onClick,
+                shape = Radii.cardShape,
+                source = source,
+                rest = ValenColors.Background,
+                onLongClick = rememberSongMenuOpener(track, MenuOrigin.Song),
+            ),
     ) {
         Box(contentAlignment = Alignment.BottomEnd) {
             Artwork(
@@ -122,12 +135,12 @@ fun ShelfCard(
                         translationY = (1f - mark) * 6.dp.toPx()
                     }
                     .clip(CircleShape)
-                    .background(ValenColors.Text),
+                    .background(ValenColors.Primary),
             ) {
                 Icon(
                     imageVector = Icons.Rounded.PlayArrow,
                     contentDescription = null,
-                    tint = ValenColors.OnLight,
+                    tint = ValenColors.OnPrimary,
                     modifier = Modifier.size(26.dp),
                 )
             }

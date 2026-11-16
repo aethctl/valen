@@ -52,6 +52,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        preferFastestRefresh()
         // Edge to edge on every Android version: the Compose UI pads itself (safeDrawing), and the
         // sign-in page keeps clear of the bars itself. 15+ enforces it; 14 and older do not.
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -73,6 +74,7 @@ class MainActivity : ComponentActivity() {
             Box(Modifier.fillMaxSize()) {
                 ValenApp(
                     coordinator = ValenRuntime.coordinator,
+                    playlists = ValenRuntime.playlists,
                     startRoute = route.value,
                     startQuery = query.value,
                 )
@@ -109,26 +111,31 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Back closes the sign-in first; the app's own back follows.
+            // Back closes the sign-in first; the app's own back follows. The app's handlers (the
+            // song menu, the sheets, a place back to Home) register as the UI composes, which puts
+            // them above any callback added earlier, so the sign-in's is added again on top each
+            // time a sign-in opens.
             LaunchedEffect(Unit) {
                 AndroidSignInHub.request.collect { current ->
-                    if (current == null) hidden.post { ValenRuntime.attachHidden(hidden) }
+                    signInBack.remove()
+                    if (current == null) {
+                        hidden.post { ValenRuntime.attachHidden(hidden) }
+                    } else {
+                        onBackPressedDispatcher.addCallback(this@MainActivity, signInBack)
+                    }
                 }
             }
         }
 
         ValenRuntime.attachHidden(hidden)
 
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (AndroidSignInHub.request.value != null) {
-                    AndroidSignInHub.close()
-                } else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
-                }
-            }
-        })
+    }
+
+    /** Back while a service's sign-in page is up: it closes the page, nothing else. */
+    private val signInBack = object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            AndroidSignInHub.close()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -136,6 +143,14 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         route.value = intent.getStringExtra("route")
         query.value = intent.getStringExtra("query")
+    }
+
+    override fun onStop() {
+        // Android may end the process any time after this without another word: the listening
+        // counted so far goes to disk now.
+        runCatching { ValenRuntime.coordinator.stats.flush() }
+        runCatching { ValenRuntime.coordinator.saveSession() }
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -157,5 +172,29 @@ class MainActivity : ComponentActivity() {
     private companion object {
         val BACKGROUND: Int = 0xFF0A0A0B.toInt()
         val SCRIM: Color = Color(0xE61A1A1E)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // The screen's own setting may have changed while the app was away (60 ↔ 120 Hz).
+        preferFastestRefresh()
+    }
+
+    /**
+     * Runs at the screen's fastest refresh rate (90, 120, 144 Hz…) at its current resolution.
+     * Several phone makers keep an app at 60 Hz unless it asks; Compose draws at whatever rate
+     * the window gets. The app asks for frames only while something moves, so the faster rate
+     * costs little when nothing does.
+     */
+    private fun preferFastestRefresh() {
+        runCatching {
+            val shown = if (Build.VERSION.SDK_INT >= 30) display else @Suppress("DEPRECATION") windowManager.defaultDisplay
+            val now = shown?.mode ?: return
+            val fastest = shown.supportedModes
+                .filter { it.physicalWidth == now.physicalWidth && it.physicalHeight == now.physicalHeight }
+                .maxByOrNull { it.refreshRate } ?: return
+            if (window.attributes.preferredDisplayModeId == fastest.modeId) return
+            window.attributes = window.attributes.also { it.preferredDisplayModeId = fastest.modeId }
+        }
     }
 }

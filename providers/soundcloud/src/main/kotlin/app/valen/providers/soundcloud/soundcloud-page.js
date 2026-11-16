@@ -25,7 +25,6 @@
     if (window.__mspReannounce) { window.__mspReannounce = false; window.MyspotiPage.announce(); }
     return;
   }
-  const gen = window.__mspPageGen;
   const API = 'https://api-v2.soundcloud.com';
   const CID_TTL_MS = 30 * 60 * 1000;
   const STATE_MIN_MS = 400;
@@ -313,6 +312,10 @@
       currentId = id;
       currentDurationMs = Number(t.duration) || 0;
       el.volume = volume;
+      // Valen's sound effects route this element through Web Audio, which needs the stream asked
+      // for with CORS; without effects (or where the CDN refused it once) it is asked for plainly.
+      const fx = window.__valenSound;
+      el.crossOrigin = fx && fx.cors(el) ? 'anonymous' : null;
       el.src = media.url;
       el.load();
 
@@ -383,7 +386,8 @@
     },
   };
 
-  const announce = () => post({ type: 'ready', page: gen, signedIn: signedIn === true, hasClientId: !!cid });
+  // The latest injection's generation (a WebView reports a load again for in-page navigations).
+  const announce = () => post({ type: 'ready', page: window.__mspPageGen, signedIn: signedIn === true, hasClientId: !!cid });
 
   window.MyspotiPage = {
     version: 1,

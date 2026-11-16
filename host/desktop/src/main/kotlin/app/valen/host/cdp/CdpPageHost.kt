@@ -4,11 +4,17 @@ package app.valen.host.cdp
 import app.myspoti.web.PageHost
 import app.myspoti.web.SessionCookies
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -24,7 +30,6 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -105,47 +110,106 @@ class CdpPageHost private constructor(
         })
     }
 
-    fun close() = socket.close(1000, null)
+    fun close() {
+        listener.shutdown("the page connection was closed")
+        socket.close(1000, null)
+    }
 
     private suspend fun send(method: String, params: JsonObject): JsonObject = listener.send(socket, method, params)
 
     internal class Listener(private val binding: String) : WebSocketListener() {
-        val messages = MutableSharedFlow<String>(extraBufferCapacity = 256)
+        private val incoming = Channel<String>(Channel.UNLIMITED)
+        private val pump = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+        /** Every page message, none dropped (see `CdpHost.Listener.messages`). */
+        val messages: SharedFlow<String> =
+            incoming.receiveAsFlow().shareIn(pump, SharingStarted.Eagerly, replay = 0)
+
         val loads = MutableSharedFlow<String>(extraBufferCapacity = 8)
         private val ids = AtomicInteger(0)
-        private val pending = ConcurrentHashMap<Int, CompletableDeferred<JsonObject>>()
+
+        /**
+         * The closed state and the commands waiting for an answer, under one guard (see
+         * `CdpHost.Listener`): a command that begins as the host closes is refused instead of
+         * waiting out the send timeout, and every waiter registered before shutdown is failed.
+         */
+        private val guard = Any()
+        private val pending = HashMap<Int, CompletableDeferred<JsonObject>>()
+        private var closed: IllegalStateException? = null
+
         val opened = CompletableDeferred<Unit>()
         @Volatile private var url = ""
 
         suspend fun send(ws: WebSocket, method: String, params: JsonObject): JsonObject {
             val id = ids.incrementAndGet()
             val waiter = CompletableDeferred<JsonObject>()
-            pending[id] = waiter
-            ws.send(buildJsonObject { put("id", id); put("method", method); put("params", params) }.toString())
-            return try { withTimeout(30_000) { waiter.await() } } finally { pending.remove(id) }
+            synchronized(guard) {
+                closed?.let { throw IllegalStateException(it.message ?: "the page connection was closed") }
+                pending[id] = waiter
+            }
+            val sent = ws.send(buildJsonObject { put("id", id); put("method", method); put("params", params) }.toString())
+            if (!sent) {
+                synchronized(guard) { pending.remove(id) }
+                throw IllegalStateException("the browser is not accepting commands ($method)")
+            }
+            return try {
+                // Only this call's own timeout is a browser failure; a caller's cancellation stays
+                // a cancellation (see `CdpHost.Listener.send`).
+                withTimeoutOrNull(SEND_TIMEOUT_MS) { waiter.await() }
+                    ?: throw IllegalStateException("the browser did not answer $method within ${SEND_TIMEOUT_MS / 1000} s")
+            } finally {
+                synchronized(guard) { pending.remove(id) }
+            }
+        }
+
+        /** Ends [messages] and fails anything still waiting: a closed host answers nothing. */
+        fun shutdown(reason: String) {
+            val failure = IllegalStateException(reason)
+            val waiting = synchronized(guard) {
+                if (closed == null) closed = failure
+                pending.values.toList().also { pending.clear() }
+            }
+            opened.completeExceptionally(failure)
+            waiting.forEach { it.completeExceptionally(failure) }
+            incoming.close()
         }
 
         override fun onOpen(webSocket: WebSocket, response: Response) { opened.complete(Unit) }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
+            runCatching { handle(text) }
+        }
+
+        private fun handle(text: String) {
             val msg = json.parseToJsonElement(text).jsonObject
             msg["id"]?.let { id ->
-                val waiter = pending.remove(id.jsonPrimitive.int) ?: return
+                val waiter = synchronized(guard) { pending.remove(id.jsonPrimitive.int) } ?: return
                 msg["error"]?.let { waiter.completeExceptionally(IllegalStateException(it.toString())) }
                     ?: waiter.complete(msg["result"]?.jsonObject ?: JsonObject(emptyMap()))
                 return
             }
             val params = msg["params"]?.jsonObject ?: return
             when (msg["method"]?.jsonPrimitive?.content) {
-                "Runtime.bindingCalled" -> if (params["name"]?.jsonPrimitive?.content == binding) messages.tryEmit(params["payload"]!!.jsonPrimitive.content)
+                "Runtime.bindingCalled" -> if (params["name"]?.jsonPrimitive?.content == binding) incoming.trySend(params["payload"]!!.jsonPrimitive.content)
                 "Page.frameNavigated" -> params["frame"]?.jsonObject?.takeIf { it["parentId"] == null }?.let { url = it["url"]!!.jsonPrimitive.content }
                 "Page.loadEventFired" -> loads.tryEmit(url)
             }
         }
 
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            shutdown("the browser closed the page connection ($code${if (reason.isNotBlank()) ": $reason" else ""})")
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            shutdown("the browser closed the page connection ($code${if (reason.isNotBlank()) ": $reason" else ""})")
+        }
+
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            opened.completeExceptionally(t)
-            pending.values.forEach { it.completeExceptionally(t) }
+            shutdown(t.message ?: "the page connection failed")
+        }
+
+        private companion object {
+            const val SEND_TIMEOUT_MS = 30_000L
         }
     }
 

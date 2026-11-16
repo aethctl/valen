@@ -1,6 +1,21 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 package app.valen.ui.screens
 
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.runtime.produceState
+import app.valen.core.ArtistResult
+import app.valen.ui.artist.BrowsePage
+import app.valen.ui.artist.LocalBrowser
+import app.valen.ui.components.ArtistBubble
+import app.valen.ui.components.ItemArrival
+import app.valen.ui.components.SectionHeader
+import app.valen.ui.components.arrive
+
+import app.valen.ui.components.rise
+import app.valen.ui.components.ScrollPage
+import app.valen.ui.menu.MenuOrigin
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,9 +29,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -88,7 +101,7 @@ fun SearchScreen(
     val scope = LocalAppScope.current
     val chrome = LocalChrome.current
     val settings by coordinator.settings.collectAsState()
-    val snapshot by coordinator.snapshot.collectAsState()
+    val snapshot by coordinator.nowPlaying.collectAsState()
     val queue by coordinator.queue.collectAsState()
     val focus = remember { FocusRequester() }
 
@@ -118,15 +131,21 @@ fun SearchScreen(
         LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     }
 
+    // Artists by that name on every service, asked beside the songs (a page of theirs is a tap away).
+    val browser = LocalBrowser.current
+    val artistsFound by produceState(emptyList<ArtistResult>(), trimmed) {
+        value = emptyList()
+        if (trimmed.isEmpty()) return@produceState
+        delay(DebounceMs)
+        value = runCatching { coordinator.artists.search(trimmed, 8) }.getOrDefault(emptyList())
+    }
+
     val playingKey = snapshot?.track?.key
     val accent = ArtworkPalette.tones(snapshot?.track?.artworkUrl).bright
     val queued = remember(queue) { queue.mapTo(HashSet()) { it.key } }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-    ) {
+    ScrollPage(key = "search:" + trimmed, modifier = modifier
+            .fillMaxSize()) {
         ContentColumn {
             PageTop()
             PageTitle(title = "Search")
@@ -139,21 +158,23 @@ fun SearchScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(Space.step2))
+            // This device is a chip only where Valen reads its files (the desktop).
+            val sources = remember(coordinator) { ProviderId.entries.filter { coordinator.provider(it) != null }.ifEmpty { ProviderId.services } }
             FilterChips(
-                options = ProviderId.entries,
+                options = sources,
                 selected = state.enabled,
                 onToggle = { provider ->
                     // From "All", picking a service means "only this one"; after that, chips add and
                     // remove, and removing the last one is the same as asking for all of them again.
                     state.enabled = when {
-                        state.enabled.size == ProviderId.entries.size -> setOf(provider)
+                        state.enabled.containsAll(sources) -> setOf(provider)
                         provider in state.enabled -> (state.enabled - provider).ifEmpty { ProviderId.entries.toSet() }
                         else -> state.enabled + provider
                     }
                 },
                 label = { it.short },
                 allLabel = "All",
-                allSelected = state.enabled.size == ProviderId.entries.size,
+                allSelected = state.enabled.containsAll(sources),
                 onAll = { state.enabled = ProviderId.entries.toSet() },
             )
             Spacer(Modifier.height(Space.step6))
@@ -169,6 +190,27 @@ fun SearchScreen(
 
                 else -> {
                     val hits = answer.hits
+                    if (artistsFound.isNotEmpty()) {
+                        SectionHeader(title = "Artists", modifier = Modifier.arrive(0, ItemArrival.Swing))
+                        Spacer(Modifier.height(Space.step2))
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(Space.step5),
+                            contentPadding = PaddingValues(horizontal = chrome.gutter),
+                            modifier = Modifier.fillMaxWidth().bleed(chrome.gutter),
+                        ) {
+                            itemsIndexed(artistsFound, key = { _, it -> it.key }) { i, artist ->
+                                ArtistBubble(
+                                    name = artist.name,
+                                    artwork = artist.imageUrl,
+                                    size = if (chrome.compact) 96.dp else 116.dp,
+                                    onClick = { browser.open(BrowsePage.Artist(artist.name, artist.copies)) },
+                                    modifier = Modifier.arrive(1 + i, ItemArrival.Slap),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(Space.step6))
+                        SectionHeader(title = "Songs")
+                    }
                     Text(
                         text = when (hits.size) {
                             0 -> "Nothing found"
@@ -192,9 +234,10 @@ fun SearchScreen(
                         // Tapping any row queues the whole merged list, in the order shown.
                         val context = hits.map { it.track }
                         Column(modifier = Modifier.fillMaxWidth().bleed(Space.step2)) {
-                            hits.forEach { hit ->
+                            hits.forEachIndexed { i, hit ->
                                 val key = hit.track.key
                                 ResultRow(
+                                    modifier = Modifier.rise(i),
                                     track = hit.track,
                                     alsoOn = hit.alsoOn,
                                     current = key == playingKey,
@@ -203,6 +246,7 @@ fun SearchScreen(
                                     accent = accent,
                                     onPlay = { scope.launch { coordinator.play(hit.track, context) } },
                                     onEnqueue = { coordinator.enqueue(hit.track) },
+                                    menu = MenuOrigin.Song,
                                 )
                             }
                         }

@@ -3,6 +3,8 @@ package app.valen.host.desktop
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.net.URI
 import java.net.http.HttpClient
@@ -31,14 +33,20 @@ import java.util.concurrent.TimeUnit
  */
 class ChromeLauncher(
     val port: Int = DEFAULT_PORT,
-    /** `$XDG_DATA_HOME/valen/chrome` unless [VALEN_CHROME_PROFILE] says otherwise. */
-    val profileDir: Path = defaultProfileDir(),
+    /** A fixed profile folder; null: [profileFor] the browser in use. */
+    private val profile: Path? = null,
     val startUrl: String = "https://open.spotify.com",
     /** Re-discovered on a later [start] when the first search found nothing. */
     var binary: Path? = findBinary(),
     /** Waits this long for `/json/version` after launching before giving up. */
     private val readyTimeoutMs: Long = 30_000,
 ) : AutoCloseable {
+
+    /**
+     * The browser's profile: `$XDG_DATA_HOME/valen/chrome` ([VALEN_CHROME_PROFILE] overrides), or a
+     * folder inside a sandboxed browser's own when that is the only browser here (see [profileFor]).
+     */
+    val profileDir: Path get() = profile ?: profileFor(binary)
 
     /** How many browsers this launcher has launched, so a caller notices a replacement. */
     @Volatile var launchCount: Int = 0
@@ -53,6 +61,17 @@ class ChromeLauncher(
 
     @Volatile private var process: Process? = null
 
+    /**
+     * True while [start] is bringing a browser up. A browser that is being started is not a dead
+     * browser: without this, a sign-in's restart looks like a crash to anything polling the port
+     * and Spotify is reported closed in the middle of a login.
+     */
+    @Volatile var starting: Boolean = false
+        private set
+
+    /** One browser per profile and port: two callers must never launch (or replace) at once. */
+    private val startLock = Mutex()
+
     /** Whether this launcher is talking to a Chrome it started itself. */
     val startedHere: Boolean get() = process != null
 
@@ -61,8 +80,23 @@ class ChromeLauncher(
      * Returns true when the browser Valen needs is up afterwards; never throws for a missing Chrome
      * (the reason is in [lastError]). With `visible = true` the browser must have a window: a
      * headless one is replaced, and a browser whose state cannot be read is a false with a reason.
+     *
+     * Calls are serialised: a play that reaches for the browser while a sign-in is replacing it
+     * waits for that replacement instead of launching a second Chrome on the same profile (which
+     * would hand its command line to the first and exit, leaving the caller with no browser).
      */
-    suspend fun start(visible: Boolean = !headless): Boolean {
+    suspend fun start(visible: Boolean = !headless): Boolean = startLock.withLock { startLocked(visible) }
+
+    private suspend fun startLocked(visible: Boolean): Boolean {
+        starting = true
+        try {
+            return launchLocked(visible)
+        } finally {
+            starting = false
+        }
+    }
+
+    private suspend fun launchLocked(visible: Boolean): Boolean {
         val wantHeadless = !visible
         if (probe()) {
             // Only a sign-in needs a window. For playback any browser already running is good
@@ -75,7 +109,7 @@ class ChromeLauncher(
                 // start it: an earlier Valen run that was killed never called close(), and a
                 // person cannot log in to a page they cannot see. Silence here was the bug - a
                 // Connect that did nothing looked like a dead button.
-                if (!stopBrowser()) {
+                if (!stopBrowserLocked()) {
                     lastError = "Could not close the headless Chrome on $cdpUrl: quit it and try again"
                     return false
                 }
@@ -97,14 +131,18 @@ class ChromeLauncher(
         runCatching { Files.createDirectories(profileDir) }
             .onFailure { lastError = "Could not create ${profileDir}: ${it.message}"; return false }
         val log = profileDir.resolve("chrome.log")
+        // The log is appended to by every launch; past a few megabytes it is started afresh.
+        runCatching { if (Files.size(log) > MaxLogBytes) Files.delete(log) }
         val command = buildList {
             add(exe.toString())
             if (wantHeadless) {
                 // The engine, without a window. Media still reaches the sound card.
                 add("--headless=new")
-                // A headless user agent would make some players refuse; this one looks ordinary.
-                userAgent(exe)?.let { add("--user-agent=$it") }
             }
+            // An ordinary Chrome user agent, in a window too: a headless engine would announce
+            // itself, and the Web Player refuses a brand browser by name as well ("Helium/0.21…",
+            // Edge, Brave). Either way Spotify has to see a Chrome it knows.
+            userAgent(exe)?.let { add("--user-agent=$it") }
             add("--user-data-dir=${profileDir.toAbsolutePath()}")
             add("--remote-debugging-port=$port")
             add("--remote-debugging-address=127.0.0.1")
@@ -119,7 +157,7 @@ class ChromeLauncher(
         headless = wantHeadless
         launchCount++
         process = runCatching {
-            ProcessBuilder(command)
+            ProcessBuilder(guarded(command))
                 .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()))
                 .redirectError(ProcessBuilder.Redirect.appendTo(log.toFile()))
                 .start()
@@ -134,7 +172,7 @@ class ChromeLauncher(
                 process?.destroy()
                 runCatching { process?.waitFor() }
                 process = runCatching {
-                    ProcessBuilder(command + "--no-sandbox")
+                    ProcessBuilder(guarded(command + "--no-sandbox"))
                         .redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile()))
                         .redirectError(ProcessBuilder.Redirect.appendTo(log.toFile()))
                         .start()
@@ -172,7 +210,7 @@ class ChromeLauncher(
             .filter { isBrowserOnPort(it, "--remote-debugging-port=$port") }
             .filter { handle -> flags(commandLineOf(handle)).none { it.startsWith("--type=") } }
             .findFirst()
-            .map { handle -> handle.info().commandLine().orElse("") }
+            .map { handle -> commandLineOf(handle) }
             .orElse(null)
     }.getOrNull()
 
@@ -193,8 +231,19 @@ class ChromeLauncher(
         return BROWSER_EXECUTABLE.containsMatchIn(exe)
     }
 
+    /**
+     * The process's own command line, from `/proc` when this machine has it.
+     *
+     * `ProcessHandle.Info.commandLine()` is not dependable here: for the Helium browser process on
+     * this machine it answers with argv[0] alone (`/opt/helium-browser-bin/helium `), so the
+     * DevTools flag and `--headless` were invisible — `isHeadless()` said "no browser", the sign-in
+     * reported "its window state could not be read", and `stopBrowser()` found nothing to stop.
+     * `/proc/<pid>/cmdline` has the complete line, NUL separated, and is readable for our own
+     * processes. [ProcessHandle] stays the source of pids and of signals.
+     */
     private fun commandLineOf(handle: ProcessHandle): String =
-        runCatching { handle.info().commandLine().orElse("") }.getOrDefault("")
+        procCommandLine(handle.pid())
+            ?: runCatching { handle.info().commandLine().orElse("") }.getOrDefault("")
 
     private fun flags(line: String): List<String> = line.split(' ')
 
@@ -203,7 +252,9 @@ class ChromeLauncher(
      * it behind, and waits until the port is free. Only ever called when a window is required and
      * the running browser has none: one browser per profile and port can exist at a time.
      */
-    suspend fun stopBrowser(): Boolean {
+    suspend fun stopBrowser(): Boolean = startLock.withLock { stopBrowserLocked() }
+
+    private suspend fun stopBrowserLocked(): Boolean {
         val targets = buildList {
             process?.let { add(it.toHandle()) }
             addAll(browserProcesses())
@@ -222,17 +273,21 @@ class ChromeLauncher(
     }
 
     /** The engine's own major version, for a plausible user agent. */
-    private fun userAgent(exe: Path): String? {
+    internal fun userAgent(exe: Path): String? {
         cachedUserAgent?.let { return it }
         val major = runCatching {
             val p = ProcessBuilder(exe.toString(), "--version").redirectErrorStream(true).start()
             val said = p.inputStream.bufferedReader().use { it.readText() }
             p.waitFor(5, TimeUnit.SECONDS)
-            (Regex("""Chrome\s+(\d+)\.""").find(said)
-                ?: Regex("""(\d+)\.\d+\.\d+\.\d+""").find(said))?.groupValues?.get(1)
+            engineMajor(said)
         }.getOrNull() ?: return null
-        return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/$major.0.0.0 Safari/537.36".also { cachedUserAgent = it }
+        // The whole line is cached, not just its tail: an `also` on the second half of the
+        // concatenation cached "Chrome/… Safari/537.36" alone, so every launch after the first
+        // announced itself with no Mozilla prefix and the Web Player refused it.
+        val agent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/$major.0.0.0 Safari/537.36"
+        cachedUserAgent = agent
+        return agent
     }
 
     @Volatile private var cachedUserAgent: String? = null
@@ -300,6 +355,92 @@ class ChromeLauncher(
         /** How long a browser gets to close politely, then forcibly, before a sign-in gives up. */
         private const val STOP_TIMEOUT_MS = 4_000L
 
+        /**
+         * The Chromium major version in a browser's `--version` output.
+         *
+         * "Google Chrome 157.0.8103.78" and Helium's "Helium 0.21.3.1 (Chromium 157.0.8103.78)"
+         * both mean 157: the engine's number, not the brand's. Reading Helium's own 0.21.3.1 as the
+         * engine produced `Chrome/0.0.0.0`, and the Web Player answered "Unsupported browser" — the
+         * player never started and every bridge call timed out behind it.
+         */
+        internal fun engineMajor(versionOutput: String): String? {
+            Regex("""(?:Chrome|Chromium)[/ ](\d+)\.""").find(versionOutput)?.let { return it.groupValues[1] }
+            // A build that prints only a version: take the plausible engine one, never a product's
+            // 0.x or 1.x number.
+            return Regex("""\b(\d{2,3})\.\d+\.\d+\.\d+""").findAll(versionOutput)
+                .map { it.groupValues[1] }
+                .maxByOrNull { it.toInt() }
+        }
+
+        /**
+         * The complete argv of [pid] from `/proc/<pid>/cmdline`, arguments joined by spaces, or
+         * null when the file cannot be read (another user's process, a non-Linux machine, a pid
+         * that is gone). Arguments are NUL separated there; the NULs become the spaces the flag
+         * scanner expects.
+         *
+         * This exists because [ProcessHandle.Info.commandLine] can answer with argv[0] only, which
+         * made a running browser invisible to every process check in this class.
+         */
+        internal fun procCommandLine(pid: Long): String? = runCatching {
+            val raw = Files.readAllBytes(Paths.get("/proc", pid.toString(), "cmdline"))
+            if (raw.isEmpty()) return@runCatching null
+            String(raw, Charsets.UTF_8).trimEnd('\u0000').replace('\u0000', ' ')
+                .takeIf { it.isNotBlank() }
+        }.getOrNull()
+
+        /**
+         * Where [browser] can keep Valen's profile. A snap or Flatpak browser cannot write to a
+         * hidden folder of the home directory, so `~/.local/share/valen/chrome` does not survive it:
+         * Chromium falls back to a profile that dies with the window, the sign-in is gone at every
+         * start, and each start opens a sign-in window again (a tester on a snap Chromium: "keeps
+         * opening Spotify in Chromium, won't stay logged in once I close it"). Inside the sandbox's
+         * own folder it persists.
+         */
+        fun profileFor(browser: Path?): Path {
+            System.getenv("VALEN_CHROME_PROFILE")?.takeIf { it.isNotBlank() }?.let { return Paths.get(it) }
+            val home = System.getProperty("user.home")
+            when (val box = browser?.let { sandboxOf(it) }) {
+                is Sandbox.Snap -> return Paths.get(home, "snap", box.name, "common", "valen-chrome")
+                is Sandbox.Flatpak -> return Paths.get(home, ".var", "app", box.appId, "data", "valen-chrome")
+                null -> {}
+            }
+            return defaultProfileDir()
+        }
+
+        /** A browser packaged in a sandbox, and how to name its own folder. */
+        sealed interface Sandbox {
+            data class Snap(val name: String) : Sandbox
+            data class Flatpak(val appId: String) : Sandbox
+        }
+
+        /**
+         * Whether [exe] is a snap or a Flatpak: by its path (`/snap/bin/…`, a Flatpak export), by
+         * where it really points, or — Ubuntu's `/usr/bin/chromium-browser` is a small script that
+         * starts the snap — by what a launcher script runs.
+         */
+        fun sandboxOf(exe: Path): Sandbox? {
+            fun byPath(p: String): Sandbox? = when {
+                p.startsWith("/snap/bin/") -> Sandbox.Snap(p.removePrefix("/snap/bin/").substringBefore('.').ifBlank { "chromium" })
+                p.startsWith("/snap/") -> Sandbox.Snap(p.removePrefix("/snap/").substringBefore('/'))
+                "/flatpak/exports/bin/" in p -> Sandbox.Flatpak(p.substringAfterLast('/'))
+                else -> null
+            }
+            byPath(exe.toString())?.let { return it }
+            val real = runCatching { exe.toRealPath().toString() }.getOrNull()
+            if (real != null && real.endsWith("/usr/bin/snap")) return Sandbox.Snap(exe.fileName.toString().removeSuffix("-browser"))
+            real?.let { byPath(it) }?.let { return it }
+            // A launcher script: read its start (a real browser binary is not text).
+            val head = runCatching {
+                Files.newInputStream(exe).use { it.readNBytes(8192) }
+            }.getOrNull() ?: return null
+            if (head.size < 2 || head[0] != '#'.code.toByte() || head[1] != '!'.code.toByte()) return null
+            val text = String(head, Charsets.UTF_8)
+            Regex("/snap/bin/([A-Za-z0-9_-]+)").find(text)?.let { return Sandbox.Snap(it.groupValues[1]) }
+            Regex("snap run ([A-Za-z0-9_-]+)").find(text)?.let { return Sandbox.Snap(it.groupValues[1]) }
+            Regex("""flatpak run[^\n]*?([A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+)""").find(text)?.let { return Sandbox.Flatpak(it.groupValues[1]) }
+            return null
+        }
+
         /** `$XDG_DATA_HOME/valen/chrome`, default `~/.local/share/valen/chrome`. */
         fun defaultProfileDir(): Path {
             System.getenv("VALEN_CHROME_PROFILE")?.takeIf { it.isNotBlank() }?.let { return Paths.get(it) }
@@ -329,27 +470,43 @@ class ChromeLauncher(
          * else (a wrapper, an unrelated tool) is never launched.
          */
         fun systemBinary(): Path? {
+            val found = chromiumCandidates()
+            // An ordinary install first: a sandboxed one (snap, Flatpak) only when it is all there is.
+            return found.firstOrNull { sandboxOf(it) == null } ?: found.firstOrNull()
+        }
+
+        /** Every Chromium-family browser found, in the order of [systemBinary]'s search. */
+        private fun chromiumCandidates(): List<Path> {
+            val out = ArrayList<Path>()
             val seen = LinkedHashSet<Path>()
             val names = listOf(
                 "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome",
                 "helium-browser", "brave-browser", "vivaldi-stable",
                 "microsoft-edge", "microsoft-edge-stable",
             )
+            fun consider(candidate: Path) {
+                if (!seen.add(candidate)) return
+                // Asking a sandboxed browser its version starts its sandbox: once the first plain
+                // install is found, sandboxed ones are not asked at all.
+                if (out.any { sandboxOf(it) == null } && sandboxOf(candidate) != null) return
+                if (isChromium(candidate)) out.add(candidate)
+            }
             for (name in names) {
                 val candidate = onPath(name) ?: continue
-                if (!seen.add(candidate)) continue
-                if (isChromium(candidate)) return candidate
+                consider(candidate)
+                if (out.any { sandboxOf(it) == null }) return out
             }
             for (fixed in KNOWN_BINARIES) {
                 val candidate = runCatching { Paths.get(fixed).toAbsolutePath().normalize() }.getOrNull() ?: continue
-                if (!Files.isExecutable(candidate) || !seen.add(candidate)) continue
-                if (isChromium(candidate)) return candidate
+                if (!Files.isExecutable(candidate)) continue
+                consider(candidate)
+                if (out.any { sandboxOf(it) == null }) return out
             }
             for (candidate in desktopExecutables()) {
-                if (!seen.add(candidate)) continue
-                if (isChromium(candidate)) return candidate
+                consider(candidate)
+                if (out.any { sandboxOf(it) == null }) return out
             }
-            return null
+            return out
         }
 
         /** The executable [name] resolves to on `PATH`, if any. */
@@ -445,4 +602,35 @@ class ChromeLauncher(
             return null
         }
     }
+}
+
+
+/** Past this size the browser's log is started afresh at the next launch. */
+private const val MaxLogBytes = 4L * 1024 * 1024
+
+/**
+ * [command] under a guardian that ends the browser when Valen ends, however it ends.
+ *
+ * A browser started directly outlives a Valen that crashes or is killed: it keeps the Spotify
+ * page — and whatever it was playing — running headless with nothing left to stop it, and the next
+ * Valen adopts that leftover engine (seen live: a crash at 18:05 left its headless browser playing
+ * on, adopted by the next run at 18:20). The guardian is a shell that starts the browser and then
+ * waits on its own stdin, a pipe only Valen holds: when Valen's process ends for any reason the
+ * pipe closes, the wait returns, and the guardian sends the browser SIGTERM (a clean Chrome exit,
+ * so the profile's cookies are written). A browser that exits by itself ends the guardian too.
+ *
+ * Without a `/bin/sh` the command runs as it is.
+ */
+internal fun guarded(command: List<String>): List<String> {
+    if (!Files.isExecutable(java.nio.file.Paths.get("/bin/sh"))) return command
+    val script = """
+        "${'$'}@" &
+        child=${'$'}!
+        trap 'kill -TERM ${'$'}child 2>/dev/null; exit 0' TERM INT HUP
+        ( while kill -0 ${'$'}child 2>/dev/null; do sleep 2; done; kill -TERM ${'$'}${'$'} 2>/dev/null ) &
+        read _ignored
+        kill -TERM ${'$'}child 2>/dev/null
+        wait ${'$'}child
+    """.trimIndent()
+    return listOf("/bin/sh", "-c", script, "valen-browser") + command
 }

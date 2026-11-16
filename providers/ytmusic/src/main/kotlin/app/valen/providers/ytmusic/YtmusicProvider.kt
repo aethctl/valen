@@ -16,6 +16,9 @@ import app.valen.core.MusicProvider
 import app.valen.core.PlayerSnapshot
 import app.valen.core.ProviderEvent
 import app.valen.core.ProviderId
+import app.valen.core.SoundWebAudio
+import app.valen.core.SoundEffects
+import app.valen.core.EffectSupport
 import app.valen.core.ProviderSignIn
 import app.valen.core.SessionState
 import app.valen.core.Track
@@ -67,7 +70,11 @@ class YtmusicProvider(
     override val session: StateFlow<SessionState> get() = signIn.state
 
     /** The page's script, injected after every load; its messages come back here. */
-    val bridge: PageBridge = PageBridge(host, YtmPage.SCRIPT, scope)
+    // The page's script, and Valen's sound engine beside it (injected with it after every load).
+    val bridge: PageBridge = PageBridge(host, YtmPage.SCRIPT + "\n;" + SoundWebAudio.SCRIPT, scope)
+
+    /** The effects last asked for, put on again whenever a page comes up. */
+    @Volatile private var effects: SoundEffects = SoundEffects.FLAT
     val page: YtmPage = YtmPage(host, bridge, scope, wallClock = now, requireSignIn = false)
 
     private val api: InnerTube = InnerTube(
@@ -111,7 +118,7 @@ class YtmusicProvider(
             }
         }
         // The volume is the app's, not the page's: re-applied when a page comes up.
-        scope.launch { bridge.ready.collect { if (it) applyVolume() } }
+        scope.launch { bridge.ready.collect { if (it) { applyVolume(); applyEffects() } } }
     }
 
     // ── Session ──
@@ -171,6 +178,19 @@ class YtmusicProvider(
 
     /** YouTube Music chooses the stream itself. */
     override suspend fun setQuality(quality: AudioQuality) {}
+
+    /** The web app's video element is routed through Web Audio ([SoundWebAudio]). */
+    override val effectSupport: EffectSupport get() = EffectSupport.Full
+
+    override suspend fun setEffects(effects: SoundEffects) {
+        this.effects = effects
+        applyEffects()
+    }
+
+    private suspend fun applyEffects() {
+        if (!bridge.ready.value) return
+        runCatching { host.evaluate(SoundWebAudio.call(effects)) }
+    }
 
     override suspend fun close() {
         runCatching { page.release() }
@@ -245,7 +265,7 @@ class YtmusicProvider(
         if (currentId != null && id != currentId) return
         if (endedFor == id) return
         endedFor = id
-        _events.tryEmit(ProviderEvent.TrackEnded)
+        _events.tryEmit(ProviderEvent.TrackEnded())
     }
 
     /** Fills [known] from the song's watch-next row (title, artists, album, length) when it is missing. */

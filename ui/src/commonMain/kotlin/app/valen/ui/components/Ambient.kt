@@ -9,7 +9,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
@@ -23,6 +22,7 @@ import app.valen.ui.artwork.ArtworkTones
 import app.valen.ui.theme.LocalReducedMotion
 import app.valen.ui.theme.Motion
 import app.valen.ui.theme.ValenColors
+import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -106,24 +106,23 @@ private val PoolY = floatArrayOf(0.08f, 0.34f, 0.98f)
 private val PoolStops = listOf(0f, 0.25f, 0.5f, 0.75f, 1f)
 private val PoolAlphas = listOf(0.95f, 0.80f, 0.47f, 0.15f, 0f)
 
-/** The stage wash moves in steps of this length: slow colour looks the same at 30 a second as at 120. */
-private const val DriftStepNanos = 33_000_000L
+/**
+ * The wash moves in steps of this length. Its pools travel about 10 px a second at most, so five
+ * steps a second look the same as sixty; and a full-screen redraw (which also re-renders every
+ * glass surface's blur over it) at the screen's own rate was most of the app's battery use on a
+ * phone while a song played.
+ */
+private const val DriftStepMs = 200L
 
 @Composable
 private fun rememberDrift(running: Boolean): FloatState {
     val seconds = remember { mutableFloatStateOf(0f) }
     LaunchedEffect(running) {
         if (!running) return@LaunchedEffect
-        var last = -1L
+        // A timer, not a frame loop: nothing asks for a frame between two steps.
         while (true) {
-            withFrameNanos { now ->
-                if (last < 0L) {
-                    last = now
-                } else if (now - last >= DriftStepNanos) {
-                    seconds.floatValue = (seconds.floatValue + (now - last) / 1e9f) % Motion.AmbientLoopSeconds
-                    last = now
-                }
-            }
+            delay(DriftStepMs)
+            seconds.floatValue = (seconds.floatValue + DriftStepMs / 1000f) % Motion.AmbientLoopSeconds
         }
     }
     return seconds

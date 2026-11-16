@@ -45,6 +45,10 @@ EOF
 cat > "$appdir/AppRun" <<'EOF'
 #!/bin/sh
 # The launcher resolves its lib/ next to its own binary; keep the path absolute.
+# glibc gives every thread that allocates its own arena (up to 8 per core); Skia and the JVM's
+# many short-lived threads left most of them half empty. Two is plenty for a player and saved
+# about 30 MB of resident memory (measured with a song and its lyrics on the stage).
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
 exec "$(dirname "$(readlink -f "$0")")/bin/Valen" "$@"
 EOF
 chmod +x "$appdir/AppRun"

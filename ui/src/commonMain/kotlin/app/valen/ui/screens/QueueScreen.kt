@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 package app.valen.ui.screens
 
+import androidx.compose.foundation.lazy.itemsIndexed
+import app.valen.ui.components.rise
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,6 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import app.valen.ui.components.PageScrollbar
+import app.valen.ui.components.pageScrollbar
+import app.valen.ui.components.rememberPageList
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -74,7 +79,7 @@ fun QueueScreen(
     val scope = LocalAppScope.current
     val queue by coordinator.queue.collectAsState()
     val index by coordinator.index.collectAsState()
-    val snapshot by coordinator.snapshot.collectAsState()
+    val snapshot by coordinator.nowPlaying.collectAsState()
 
     var dragKey by remember { mutableStateOf<String?>(null) }
     var dragTravel by remember { mutableStateOf(0f) }
@@ -163,95 +168,102 @@ fun QueueScreen(
                     )
                     Spacer(Modifier.width(Space.step12))
                 }
-                LazyColumn(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .bleed(Space.step2),
-                    contentPadding = PaddingValues(
-                        start = Space.step2,
-                        end = Space.step2,
-                        top = when {
-                            beside -> 0.dp
-                            chrome.compact -> Space.step2
-                            else -> Space.step10
-                        },
-                        bottom = chrome.bottom + Space.step12,
-                    ),
-                ) {
-                    if (!beside) {
-                        item(key = "queue_header") { Column { header() } }
-                    }
+                // The queue keeps its place too, so a long one is not back at its top each time.
+                val queueList = rememberPageList("queue")
+                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    LazyColumn(
+                        state = queueList,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .bleed(Space.step2),
+                        contentPadding = PaddingValues(
+                            start = Space.step2,
+                            end = Space.step2,
+                            top = when {
+                                beside -> 0.dp
+                                chrome.compact -> Space.step2
+                                else -> Space.step10
+                            },
+                            bottom = chrome.bottom + Space.step12,
+                        ),
+                    ) {
+                        if (!beside) {
+                            item(key = "queue_header") { Column { header() } }
+                        }
 
-                    if (queue.isEmpty()) {
-                        item(key = "queue_empty") {
-                            EmptyState(
-                                title = "Nothing is lined up",
-                                body = "Songs you play or add from search line up here, in the order they will play.",
-                                actionLabel = "Find music",
-                                onAction = onBrowse,
-                                modifier = Modifier.padding(top = Space.step8),
-                            )
+                        if (queue.isEmpty()) {
+                            item(key = "queue_empty") {
+                                EmptyState(
+                                    title = "Nothing is lined up",
+                                    body = "Songs you play or add from search line up here, in the order they will play.",
+                                    actionLabel = "Find music",
+                                    onAction = onBrowse,
+                                    modifier = Modifier.padding(top = Space.step8),
+                                )
+                            }
+                            return@LazyColumn
                         }
-                        return@LazyColumn
-                    }
 
-                    if (currentTrack != null && !beside) {
-                        item(key = "queue_now_label") { QueueSectionLabel("Now playing") }
-                        item(key = "queue_now") {
-                            NowLeading(track = currentTrack, playing = playing, accent = accent, onToggle = toggle)
+                        if (currentTrack != null && !beside) {
+                            item(key = "queue_now_label") { QueueSectionLabel("Now playing") }
+                            item(key = "queue_now") {
+                                NowLeading(track = currentTrack, playing = playing, accent = accent, onToggle = toggle)
+                            }
                         }
-                    }
 
-                    if (upNext.isNotEmpty()) {
-                        item(key = "queue_next_label") { QueueSectionLabel("Up next", first = beside) }
-                        items(upNext, key = { "queue_next_${it.key}" }) { track ->
-                            QueueRow(
-                                track = track,
-                                dimmed = false,
-                                reorderable = true,
-                                modifier = Modifier.animateItem(placementSpec = Motion.QueueReorder),
-                                onPlay = { scope.launch { coordinator.play(track, coordinator.queue.value) } },
-                                onRemove = {
-                                    val at = coordinator.queue.value.indexOfFirst { it.key == track.key }
-                                    if (at >= 0) coordinator.removeAt(at)
-                                },
-                                onDragStarted = {
-                                    dragKey = track.key
-                                    dragTravel = 0f
-                                },
-                                onDragStopped = {
-                                    dragKey = null
-                                    dragTravel = 0f
-                                },
-                                dragDelta = ::dragDelta,
-                            )
+                        if (upNext.isNotEmpty()) {
+                            item(key = "queue_next_label") { QueueSectionLabel("Up next", first = beside) }
+                            itemsIndexed(upNext, key = { _, it -> "queue_next_${it.key}" }) { i, track ->
+                                QueueRow(
+                                    track = track,
+                                    dimmed = false,
+                                    reorderable = true,
+                                    modifier = Modifier.animateItem(placementSpec = Motion.QueueReorder).rise(i + 1),
+                                    onPlay = { scope.launch { coordinator.play(track, coordinator.queue.value) } },
+                                    onRemove = {
+                                        val at = coordinator.queue.value.indexOfFirst { it.key == track.key }
+                                        if (at >= 0) coordinator.removeAt(at)
+                                    },
+                                    menuIndex = queue.indexOfFirst { it.key == track.key },
+                                    onDragStarted = {
+                                        dragKey = track.key
+                                        dragTravel = 0f
+                                    },
+                                    onDragStopped = {
+                                        dragKey = null
+                                        dragTravel = 0f
+                                    },
+                                    dragDelta = ::dragDelta,
+                                )
+                            }
+                        } else {
+                            item(key = "queue_end") {
+                                Text(
+                                    text = "Nothing after this song. Add another from search.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = ValenColors.Text2,
+                                    modifier = Modifier.padding(top = if (beside) 0.dp else Space.step6, bottom = Space.step2),
+                                )
+                            }
                         }
-                    } else {
-                        item(key = "queue_end") {
-                            Text(
-                                text = "Nothing after this song. Add another from search.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = ValenColors.Text2,
-                                modifier = Modifier.padding(top = if (beside) 0.dp else Space.step6, bottom = Space.step2),
-                            )
-                        }
-                    }
 
-                    if (history.isNotEmpty()) {
-                        item(key = "queue_history_label") { QueueSectionLabel("Played") }
-                        items(history, key = { "queue_history_${it.key}" }) { track ->
-                            QueueRow(
-                                track = track,
-                                dimmed = true,
-                                onPlay = { scope.launch { coordinator.play(track, coordinator.queue.value) } },
-                                onRemove = {
-                                    val at = coordinator.queue.value.indexOfFirst { it.key == track.key }
-                                    if (at >= 0) coordinator.removeAt(at)
-                                },
-                            )
+                        if (history.isNotEmpty()) {
+                            item(key = "queue_history_label") { QueueSectionLabel("Played") }
+                            items(history, key = { "queue_history_${it.key}" }) { track ->
+                                QueueRow(
+                                    track = track,
+                                    dimmed = true,
+                                    onPlay = { scope.launch { coordinator.play(track, coordinator.queue.value) } },
+                                    onRemove = {
+                                        val at = coordinator.queue.value.indexOfFirst { it.key == track.key }
+                                        if (at >= 0) coordinator.removeAt(at)
+                                    },
+                                    menuIndex = queue.indexOfFirst { it.key == track.key },
+                                )
+                            }
                         }
                     }
+                    PageScrollbar(queueList, Modifier.align(Alignment.CenterEnd).pageScrollbar())
                 }
                 }
             }
