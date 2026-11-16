@@ -114,6 +114,11 @@ Google may refuse its account page inside an Android WebView; YouTube Music stil
 - **SoundCloud** — Connect opens SoundCloud's own sign-in. Signed out, label tracks are 30-second
   previews, as SoundCloud serves them.
 
+On the desktop, Connect always puts a window on screen, even though playback runs in a headless
+browser: a headless Chrome is closed and reopened with a window, whether Valen started it or an
+earlier run left it behind. When no window can be opened, the service says why instead of leaving
+the button doing nothing.
+
 Sessions persist in the private browser profile per service. Disconnect deletes that service's
 cookies. Nothing is written to the settings file except volume, quality and the last service.
 
