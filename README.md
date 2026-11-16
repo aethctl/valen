@@ -1,9 +1,11 @@
 ![the valen tag, drawn stroke by stroke](docs/readme/hero.svg)
 
+# NOT READY TO USE, YET. 
+
 ![linux + android · kotlin · compose multiplatform · spotify · youtube music · soundcloud · gpl-3.0](docs/readme/badges.svg)
 
 <p align="center">
-  <em>One player for Linux and Android — 3 Platforms; Spotify, YouTube Music and SoundCloud.</em>
+  <em> One player for Linux and Android — 3 Platforms; Spotify, YouTube Music and SoundCloud.</em>
 </p>
 
 Valen is a music player built once in Kotlin and shipped to Linux and Android: one queue, one now-playing stage, one library. A Spotify song can sit between a SoundCloud set and a YouTube Music album, and the app never asks you to remember which service it came from — only which one it is playing from, when you want to know.
