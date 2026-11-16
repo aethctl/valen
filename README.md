@@ -3,7 +3,7 @@
 ![linux + android · kotlin · compose multiplatform · spotify · youtube music · soundcloud · gpl-3.0](docs/readme/badges.svg)
 
 <p align="center">
-  <em>One quiet player for Linux and Android — one queue for Spotify, YouTube Music and SoundCloud.</em>
+  <em>One player for Linux and Android — 3 Platforms; Spotify, YouTube Music and SoundCloud.</em>
 </p>
 
 Valen is a music player built once in Kotlin and shipped to Linux and Android: one queue, one now-playing stage, one library. A Spotify song can sit between a SoundCloud set and a YouTube Music album, and the app never asks you to remember which service it came from — only which one it is playing from, when you want to know.
@@ -62,10 +62,6 @@ Valen is GPL-3.0. It stands on other people's work, and says so in [`NOTICE`](NO
 - **[Metrolist](https://github.com/mostafaalagamy/Metrolist)** — the approach to lyrics and the Lyprio lyrics provider, ported (GPL-3.0).
 - **[Astra](https://github.com/Boof2015/astra)** — the parametric EQ filter model, presets and AutoEQ parsing (GPL-3.0).
 
-The visual contract is in [`docs/design-spec.md`](docs/design-spec.md); the provider contract is in [`docs/provider-contract.md`](docs/provider-contract.md).
-
-Valen is not affiliated with Spotify AB, Google/YouTube, Discord or SoundCloud.
+Valen is not affiliated with Spotify AB, Google/YouTube or SoundCloud.
 
 ![the valen tag and a marker line](docs/readme/footer.svg)
-
-<p align="center"><sub>The previous, longer README is kept in <a href="README.old.md">README.old.md</a>.</sub></p>
