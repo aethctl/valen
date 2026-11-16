@@ -17,7 +17,7 @@ The queue belongs to Valen. The three services are adapters behind one interface
 Playback runs through each service's **own official player** — the Spotify Web Player in a private, hidden Chrome on the desktop, the YouTube Music web app, SoundCloud's own streams — so no DRM is circumvented, Valen never asks for a password, and it never keeps a token. Sign-in happens on the service's own page, inside Valen's own browser profile; disconnecting deletes that service's cookies. Playlists, likes and the queue are Valen's data: nothing is ever written back to an account.
 
 <details>
-<summary><b>the plumbing, if you want it</b></summary>
+<summary><b>how does it work?? </b></summary>
 
 - **Spotify** plays through its official Web Player, driven over Chrome DevTools on the desktop and through a relayed WebView on Android. The page only fetches audio while it believes it has focus; on the desktop Valen emulates that focus, so the browser window may stay in the background.
 - **YouTube Music and SoundCloud** are native on both platforms, with no browser at all: [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor) resolves a stream address and `ffplay` plays it on the desktop, while the same resolvers run through ExoPlayer on Android.
@@ -27,11 +27,6 @@ Playback runs through each service's **own official player** — the Spotify Web
 </details>
 
 ## the wall
-
-One page, three widths. A wide window gets a 236dp side panel and a 72dp player dock around content that fills whatever is left — a wider window is room for more music, not for margin. Between 700dp and 1000dp the panel becomes an icon rail; below 700dp the dock becomes a floating tab bar, a mini-player capsule and full-screen sheets. Only screens you read rather than browse — Settings, Import — stop at a reading width.
-
-Every page keeps its scroll and an open playlist stays open while the app runs; on the next start the last queue comes back, paused on the same song at the same place.
-
 ![home on a wide window: a greeting, the playing song, the services](docs/readme/screens/home-desktop.jpg)
 
 <p align="center"><sub>Home, with the cover's colour washing down the page.</sub></p>
