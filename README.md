@@ -21,7 +21,6 @@ Playback runs through each service's **own official player** — the Spotify Web
 <details>
 <summary><b>how does it work?? </b></summary>
 
-- **Desktop sign-ins survive closing the login window.** Valen recovers its private browser in the background and reads the saved cookies again. Use Disconnect to sign out; closing Valen stops its browser. Sessions can still expire at the service.
 - **Spotify** plays through its official Web Player, driven over Chrome DevTools on the desktop and through a relayed WebView on Android. The page only fetches audio while it believes it has focus; on the desktop Valen emulates that focus, so the browser window may stay in the background.
 - **YouTube Music and SoundCloud** are native on both platforms, with no browser at all: [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor) resolves a stream address and `ffplay` plays it on the desktop, while the same resolvers run through ExoPlayer on Android.
 - **Spotify's streams are never downloaded.** Its audio is DRM-protected and its servers watch for bulk fetching, so a Spotify song you keep is kept as the same recording from YouTube Music (else SoundCloud), matched as strictly as a playlist import.
