@@ -157,6 +157,9 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
         val webView = this
         cookies().apply { setAcceptCookie(true); setAcceptThirdPartyCookies(webView, true) }
         hostChannel = exposeChannel("MyspotiHost", PLAYER_ORIGIN) { json -> _messages.tryEmit(json) }
+        // Spotify Connect's commands leave from the app, without the WebView's X-Requested-With:
+        // carrying it they are answered 200 and never delivered, and nothing plays (SpotifyRelay).
+        SpotifyRelay(this) { DESKTOP_UA }.install()
         webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 val allowed = request.resources.filter { it == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID }
@@ -165,6 +168,10 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
         }
         webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                // The load watchdog's evidence that something started. It was never counted, so
+                // the watchdog reloaded the Web Player at about 4, 12, 24 and 40 s after every
+                // load, each time wiping the song just asked for back to the account's last one.
+                pageStarts++
                 mainFrameFailed = false
                 _pageLoaded.value = false
                 main.removeCallbacks(loadTimeout)
@@ -268,12 +275,27 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
 
     fun load() = load(firstWatchMs = LOAD_WATCH_MS)
 
-    private fun load(firstWatchMs: Long) = main.post {
+    private fun load(firstWatchMs: Long) = main.post { loadNow(firstWatchMs) }
+
+    /** Main thread. */
+    private fun loadNow(firstWatchMs: Long) {
         pageStarts = 0
         loadAsked = true
         view.loadUrl(PLAYER_URL)
         watchLoad(PLAYER_URL, attempt = 1, firstWatchMs)
     }
+
+    /**
+     * Loads the player unless it is loaded, loading or showing a sign-in already. The Web Player
+     * is a whole web app (half a gigabyte and two cores while it boots on a phone), so it is not
+     * loaded at start any more: a signed-in account loads it shortly after, and anything else
+     * that needs it (a Spotify search or play) asks for it here.
+     */
+    fun ensureLoaded() = main.post { if (wantsPlayer()) loadNow(LOAD_WATCH_MS) }
+
+    /** No player asked for yet, and no sign-in page on show (a failed one does not count). */
+    private fun wantsPlayer(): Boolean =
+        !loadAsked && _loginLoad.value != LoginLoad.LOADING && _loginLoad.value != LoginLoad.SHOWN
 
     /** Page starts since the last [load]; the load watchdog looks at it. */
     private var pageStarts = 0
@@ -439,7 +461,13 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
         return done.await()
     }
 
-    override fun commandComing() { main.post { view.postInvalidateOnAnimation() } }
+    override fun commandComing() {
+        main.post {
+            // A command for a page that was never loaded: load it (the command waits for it to answer).
+            if (wantsPlayer()) loadNow(LOAD_WATCH_MS)
+            view.postInvalidateOnAnimation()
+        }
+    }
 
     /**
      * Keeps the page attached to a window: a 1 px INVISIBLE view while the player is hidden, full
@@ -513,11 +541,21 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
         const val LOG = "Valen"
 
         /**
-         * The desktop browser Valen presents. On a phone UA the Web Player only offers to open the
-         * Spotify app; the desktop site is the one whose player is used.
+         * The desktop browser Valen presents (on a phone UA the Web Player only offers to open the
+         * Spotify app): a desktop Chrome on Linux, at the version of the WebView engine that is really running.
+         * It used to name Chrome 133 whatever the engine was: Spotify answers a browser it takes for
+         * an old (or a mismatched) Chrome with "Unsupported browser" and no player, the same
+         * failure the desktop had with a made-up version (AGENTS §5).
          */
-        const val DESKTOP_UA =
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+        val DESKTOP_UA: String by lazy {
+            val major = runCatching {
+                android.webkit.WebView.getCurrentWebViewPackage()?.versionName?.substringBefore('.')?.toIntOrNull()
+            }.getOrNull()?.takeIf { it >= 100 } ?: FALLBACK_MAJOR
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$major.0.0.0 Safari/537.36"
+        }
+
+        /** Used only where the engine's version cannot be read. */
+        private const val FALLBACK_MAJOR = 142
 
         const val PLAYER_URL = "https://open.spotify.com/"
         const val LOGIN_URL = "https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F"

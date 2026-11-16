@@ -176,6 +176,8 @@ data class ArtistPage(
     val popularReleases: List<Album>,
     val appearsOn: List<Album>,
     val related: List<Artist>,
+    /** Playlists that feature the artist ("This Is …", lists the artist was discovered on). */
+    val playlists: List<Playlist> = emptyList(),
 )
 
 /** A Blend invitation just made: [link] is what to send, [id] what the link carries. */

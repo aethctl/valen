@@ -7,16 +7,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 
-private val ValenScheme = darkColorScheme(
-    primary = ValenColors.Text,
-    onPrimary = ValenColors.Background,
-    primaryContainer = ValenColors.Surface2,
-    onPrimaryContainer = ValenColors.Text,
+@Composable
+private fun materialScheme() = darkColorScheme(
+    primary = ValenColors.Primary,
+    onPrimary = ValenColors.OnPrimary,
+    primaryContainer = ValenColors.Container,
+    onPrimaryContainer = ValenColors.OnContainer,
     secondary = ValenColors.Text2,
     onSecondary = ValenColors.Background,
     secondaryContainer = ValenColors.Surface2,
     onSecondaryContainer = ValenColors.Text,
-    tertiary = ValenColors.AccentFallback,
+    tertiary = ValenColors.Primary,
     onTertiary = ValenColors.Background,
     background = ValenColors.Background,
     onBackground = ValenColors.Text,
@@ -42,7 +43,7 @@ fun ValenTheme(
     content: @Composable () -> Unit,
 ) {
     val typography = valenTypography()
-    MaterialTheme(colorScheme = ValenScheme, typography = typography) {
+    MaterialTheme(colorScheme = materialScheme(), typography = typography) {
         CompositionLocalProvider(LocalReducedMotion provides reducedMotion) {
             content()
         }

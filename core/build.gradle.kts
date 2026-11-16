@@ -9,7 +9,7 @@ kotlin {
     jvm()
     android {
         namespace = "app.valen.core"
-        compileSdk = 36
+        compileSdk = 37
         minSdk = 29
     }
 

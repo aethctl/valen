@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 package app.valen.ui.screens
 
+import app.valen.ui.theme.Layout
+import app.valen.ui.components.ScrollPage
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,15 +16,12 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -36,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
@@ -45,6 +46,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import app.valen.core.PlaybackCoordinator
+import app.valen.core.Playlist
+import app.valen.core.PlaylistManager
 import app.valen.core.ProviderId
 import app.valen.core.SessionState
 import app.valen.core.Track
@@ -57,14 +60,24 @@ import app.valen.ui.components.Artwork
 import app.valen.ui.components.ContentColumn
 import app.valen.ui.components.IconTap
 import app.valen.ui.components.PageBottom
-import app.valen.ui.components.PageTop
+import app.valen.ui.components.PlaylistCard
 import app.valen.ui.components.PrimaryButton
-import app.valen.ui.components.QuickTile
 import app.valen.ui.components.QuietButton
 import app.valen.ui.components.SectionHeader
 import app.valen.ui.components.ServiceTile
 import app.valen.ui.components.ShelfCard
+import app.valen.ui.components.KineticText
+import app.valen.ui.components.Tag
 import app.valen.ui.components.bleed
+import app.valen.ui.components.hoverLift
+import app.valen.ui.components.pasted
+import app.valen.ui.components.rememberInteraction
+import app.valen.ui.components.rise
+import app.valen.ui.components.arrive
+import app.valen.ui.components.ItemArrival
+import app.valen.ui.components.taped
+import app.valen.ui.components.tilt
+import app.valen.ui.artwork.LocalPlayingTones
 import app.valen.ui.components.tap
 import app.valen.ui.theme.LocalChrome
 import app.valen.ui.theme.Radii
@@ -76,65 +89,73 @@ import app.valen.ui.util.greetingFor
 import kotlinx.coroutines.launch
 
 /**
- * Home answers, in order: what is playing, what comes next, what was played, and which services
- * are reachable. A question with no answer yet is simply not asked: an empty queue shows no
- * "Up next", a first start shows no "Recently played".
+ * Home, in the order a listening app answers: hello, whatever is playing, the playlists you keep
+ * here, what you played last, and — only while nothing is connected — the three services.
+ *
+ * The greeting speaks first because the page belongs to the person, not to the player, and on a
+ * wide window it stands in the same washed band as the song, so the page opens with one piece of
+ * colour rather than a black strip and a tinted block under it. A section with nothing to show is
+ * left out: no empty "Your playlists", no "Recently played" on a first start. Services move off
+ * this page as soon as one is connected, because connecting is a setup job and the side panel
+ * already reports what each service is doing.
  */
 @Composable
 fun HomeScreen(
     coordinator: PlaybackCoordinator,
+    playlists: PlaylistManager,
     onRoute: (Route) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = LocalAppScope.current
     val chrome = LocalChrome.current
-    val snapshot by coordinator.snapshot.collectAsState()
+    val snapshot by coordinator.nowPlaying.collectAsState()
     val queue by coordinator.queue.collectAsState()
     val index by coordinator.index.collectAsState()
     val sessions by coordinator.sessions.collectAsState()
+    val saved by playlists.library.playlists.collectAsState()
+    val settings by coordinator.settings.collectAsState()
 
     val current = snapshot?.track ?: queue.getOrNull(index)
-    val upNext = remember(queue, index) {
-        if (index < 0) emptyList() else queue.drop(index + 1).take(6)
-    }
     val history = remember(queue, index) {
         if (index <= 0) emptyList() else queue.take(index).reversed().distinctBy { it.key }.take(12)
     }
+    val signedOut = ProviderId.services.none { sessions[it] is SessionState.Connected }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-    ) {
-        if (current != null) {
-            NowHero(
-                track = current,
-                isPlaying = snapshot?.isPlaying == true,
-                onToggle = { scope.launch { coordinator.toggle() } },
-                onOpen = { onRoute(Route.NowPlaying) },
-                onSettings = { onRoute(Route.Settings) },
-            )
+    fun playPlaylist(playlist: Playlist) {
+        val playable = playlist.tracks.filter { playlists.canPlay(it) }
+        if (playable.isEmpty()) {
+            // Nothing here can play on this machine right now: the lists screen can say why.
+            onRoute(Route.Playlists)
         } else {
-            Welcome(
-                connected = ProviderId.entries.count { sessions[it] is SessionState.Connected },
-                onSearch = { onRoute(Route.Search) },
-                onSettings = { onRoute(Route.Settings) },
-            )
+            scope.launch { coordinator.play(playable.first(), playable, from = playlist.name) }
         }
+    }
+
+    ScrollPage(key = "home", modifier = modifier
+            .fillMaxSize()) {
+        Lead(
+            track = current,
+            isPlaying = snapshot?.isPlaying == true,
+            connected = ProviderId.services.count { sessions[it] is SessionState.Connected },
+            onToggle = { scope.launch { coordinator.toggle() } },
+            onOpenPlayer = { onRoute(Route.NowPlaying) },
+            onSearch = { onRoute(Route.Search) },
+            onSettings = { onRoute(Route.Settings) },
+            onProfile = { onRoute(Route.Profile) },
+            avatar = settings.avatar,
+        )
 
         ContentColumn {
-            if (upNext.isNotEmpty()) {
-                SectionHeader(title = "Up next", onOpen = { onRoute(Route.Queue) })
-                Spacer(Modifier.height(Space.step2))
-                QuickGrid(
-                    tracks = upNext,
-                    onPlay = { track -> scope.launch { coordinator.play(track, queue) } },
-                )
-                Spacer(Modifier.height(Space.step8))
-            }
+            // "Your week", once it is turned on and has something to tell.
+            app.valen.ui.recap.WeekCard(
+                coordinator = coordinator,
+                modifier = Modifier.padding(bottom = Space.step8).arrive(1),
+            )
+            // What the taste picks first: for you, your artists, on repeat.
+            TasteSections(coordinator = coordinator, startIndex = 2)
 
-            if (history.isNotEmpty()) {
-                SectionHeader(title = "Recently played", onOpen = { onRoute(Route.Queue) })
+            if (saved.isNotEmpty()) {
+                SectionHeader(title = "Your playlists", onOpen = { onRoute(Route.Playlists) }, modifier = Modifier.arrive(2, ItemArrival.Swing))
                 Spacer(Modifier.height(Space.step2))
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(Space.step4),
@@ -143,125 +164,291 @@ fun HomeScreen(
                         .fillMaxWidth()
                         .bleed(chrome.gutter),
                 ) {
-                    items(history, key = { it.key }) { track ->
-                        ShelfCard(
-                            track = track,
+                    itemsIndexed(saved, key = { _, it -> it.id }) { i, playlist ->
+                        PlaylistCard(
+                            modifier = Modifier.arrive(3 + i, ItemArrival.Slap),
+                            playlist = playlist,
                             size = if (chrome.compact) 140.dp else 168.dp,
-                            onClick = { scope.launch { coordinator.play(track, queue) } },
+                            onClick = { playPlaylist(playlist) },
                         )
                     }
                 }
                 Spacer(Modifier.height(Space.step8))
             }
 
-            SectionHeader(title = "Services")
-            Spacer(Modifier.height(Space.step2))
-            ServiceTiles(
-                sessions = sessions,
-                onConnect = { id -> scope.launch { coordinator.connect(id) } },
-            )
+            if (history.isNotEmpty()) {
+                SectionHeader(title = "Recently played", modifier = Modifier.arrive(4, ItemArrival.Swing))
+                Spacer(Modifier.height(Space.step2))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(Space.step4),
+                    contentPadding = PaddingValues(horizontal = chrome.gutter),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bleed(chrome.gutter),
+                ) {
+                    itemsIndexed(history, key = { _, it -> it.key }) { i, track ->
+                        ShelfCard(
+                            modifier = Modifier.arrive(5 + i, ItemArrival.Slap),
+                            track = track,
+                            size = if (chrome.compact) 140.dp else 168.dp,
+                            onClick = {
+                                val context = queue.ifEmpty { listOf(track) }
+                                scope.launch { coordinator.play(track, context) }
+                            },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(Space.step8))
+            }
+
+            if (signedOut) {
+                SectionHeader(title = "Services", modifier = Modifier.arrive(6, ItemArrival.Swing))
+                Spacer(Modifier.height(Space.step2))
+                ServiceTiles(
+                    sessions = sessions,
+                    onConnect = { id -> scope.launch { coordinator.connect(id) } },
+                )
+            }
         }
         PageBottom()
     }
 }
 
 /**
- * What is playing, as the top of the page. On a wide window the cover's colours wash the band and
- * the cover itself sits at its right end; on a phone the cover is the band, edge to edge, fading
- * into the page. Either way the words sit on the page's left edge, above everything that follows.
+ * The top of the page: the greeting and what is playing (or, on a quiet first start, what can be
+ * searched). A wide window holds both in one band washed by the cover's colours; a phone cannot
+ * put a greeting on a full-bleed cover and keep it legible, so there the cover is the whole band
+ * and the greeting stands on the page above it.
+ *
+ * With nothing playing there is no cover to take colour from, so there is no wash either: a grey
+ * band where no artwork stands is fog, not light.
  */
 @Composable
-private fun NowHero(
+private fun Lead(
+    track: Track?,
+    isPlaying: Boolean,
+    connected: Int,
+    onToggle: () -> Unit,
+    onOpenPlayer: () -> Unit,
+    onSearch: () -> Unit,
+    onSettings: () -> Unit,
+    onProfile: () -> Unit,
+    avatar: String?,
+) {
+    val chrome = LocalChrome.current
+    val greeting = greetingFor(remember { currentHour() })
+    if (chrome.compact) {
+        ContentColumn {
+            Spacer(Modifier.height(Space.step6))
+            Greeting(greeting = greeting, compact = true, onSettings = onSettings, onProfile = onProfile, avatar = avatar)
+        }
+        Spacer(Modifier.height(Space.step6))
+        if (track != null) {
+            PhoneHero(
+                track = track,
+                isPlaying = isPlaying,
+                onToggle = onToggle,
+                onOpen = onOpenPlayer,
+            )
+        } else {
+            ContentColumn {
+                StartBody(connected = connected, onSearch = onSearch)
+                Spacer(Modifier.height(Space.step10))
+            }
+        }
+    } else {
+        val tones = track?.let { ArtworkPalette.tones(it.artworkUrl) }
+        if (tones == null) {
+            ContentColumn {
+                WideLead(greeting = greeting, onSettings = onSettings) {
+                    StartBody(connected = connected, onSearch = onSearch)
+                }
+            }
+        } else {
+            WashedBand(tones = tones) {
+                WideLead(greeting = greeting, onSettings = onSettings) {
+                    WideHero(
+                        track = track,
+                        isPlaying = isPlaying,
+                        onToggle = onToggle,
+                        onOpen = onOpenPlayer,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** A wide window's opening: greeting first, then the song — or the door to search. */
+@Composable
+private fun WideLead(
+    greeting: String,
+    onSettings: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Spacer(Modifier.height(Space.step10))
+    Greeting(greeting = greeting, compact = false, onSettings = onSettings)
+    Spacer(Modifier.height(Space.step8))
+    content()
+    Spacer(Modifier.height(Space.step10))
+}
+
+/** The page's opening band: one wash, and content pinned to the page's left edge. */
+@Composable
+private fun WashedBand(tones: ArtworkTones, content: @Composable () -> Unit) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+        AmbientWash(tones = tones, modifier = Modifier.matchParentSize())
+        ContentColumn { content() }
+    }
+}
+
+/** The greeting, in the app's voice. On a phone it carries the way to Settings; the panel does. */
+@Composable
+private fun Greeting(
+    greeting: String,
+    compact: Boolean,
+    onSettings: () -> Unit,
+    onProfile: () -> Unit = {},
+    avatar: String? = null,
+) {
+    Column {
+        if (compact) {
+            // A phone has no side panel to sign, so the tag signs the top of the page, with the
+            // way to Settings beside it, and the greeting gets the full width under them.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Tag(
+                    ink = ValenColors.Primary,
+                    mist = ValenColors.Primary,
+                    modifier = Modifier.width(88.dp),
+                )
+                Spacer(Modifier.weight(1f))
+                // The profile, as its own small round screen.
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(Layout.hitTarget)
+                        .tap(onClick = onProfile, shape = CircleShape),
+                ) {
+                    if (avatar != null) {
+                        app.valen.ui.profile.PictureImage(uri = avatar, modifier = Modifier.size(32.dp).clip(CircleShape))
+                    } else {
+                        Icon(
+                            imageVector = Route.Profile.icon,
+                            contentDescription = Route.Profile.label,
+                            tint = ValenColors.Text,
+                            modifier = Modifier.size(26.dp),
+                        )
+                    }
+                }
+                IconTap(
+                    icon = Icons.Rounded.Settings,
+                    label = "Settings",
+                    onClick = onSettings,
+                    tint = ValenColors.Text,
+                )
+            }
+            Spacer(Modifier.height(Space.step2))
+        }
+        KineticText(
+            text = greeting,
+            style = if (compact) MaterialTheme.typography.displaySmall else MaterialTheme.typography.displayMedium,
+            color = ValenColors.Text,
+            underline = LocalPlayingTones.current.bright,
+        )
+    }
+}
+
+/**
+ * What is playing, as the top of the page. On a wide window the cover sits at the right end of the
+ * washed band; on a phone the cover is the band, edge to edge, fading into the page.
+ */
+@Composable
+private fun PhoneHero(
     track: Track,
     isPlaying: Boolean,
     onToggle: () -> Unit,
     onOpen: () -> Unit,
-    onSettings: () -> Unit,
 ) {
     val chrome = LocalChrome.current
     val tones = ArtworkPalette.tones(track.artworkUrl)
-    if (chrome.compact) {
-        Box(
-            contentAlignment = Alignment.BottomStart,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 440.dp)
-                .aspectRatio(1f, matchHeightConstraintsFirst = false),
-        ) {
+    Box(
+        contentAlignment = Alignment.BottomStart,
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f),
+    ) {
+        Artwork(
+            url = track.artworkUrl,
+            shape = RectangleShape,
+            measure = true,
+            iconSize = 48.dp,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Spacer(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    // The words sit on the lower half, so that half is firmly under the page's
+                    // black: on a pale cover a thin scrim leaves white type unreadable.
+                    Brush.verticalGradient(
+                        0f to ValenColors.Background.copy(alpha = 0.35f),
+                        0.26f to Color.Transparent,
+                        0.52f to ValenColors.Background.copy(alpha = 0.62f),
+                        0.78f to ValenColors.Background.copy(alpha = 0.90f),
+                        1f to ValenColors.Background,
+                    ),
+                ),
+        )
+        Column(modifier = Modifier.padding(horizontal = chrome.gutter)) {
+            HeroWords(track = track, isPlaying = isPlaying, wide = false)
+            Spacer(Modifier.height(Space.step4))
+            HeroActions(isPlaying = isPlaying, onToggle = onToggle, onOpen = onOpen)
+            Spacer(Modifier.height(Space.step6))
+        }
+    }
+}
+
+@Composable
+private fun WideHero(
+    track: Track,
+    isPlaying: Boolean,
+    onToggle: () -> Unit,
+    onOpen: () -> Unit,
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        // The cover grows a step with the window: at 248dp it reads as a stamp in the corner of a
+        // very wide band. It stays the anchor, the words stay the weight beside it.
+        val cover = when {
+            maxWidth >= 2000.dp -> HeroCoverWidest
+            maxWidth >= 1600.dp -> HeroCoverWide
+            else -> HeroCover
+        }
+        Row(verticalAlignment = Alignment.Bottom) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = Space.step8),
+            ) {
+                HeroWords(track = track, isPlaying = isPlaying, wide = true)
+                Spacer(Modifier.height(Space.step6))
+                HeroActions(isPlaying = isPlaying, onToggle = onToggle, onOpen = onOpen)
+            }
+            val coverSource = rememberInteraction()
             Artwork(
                 url = track.artworkUrl,
-                shape = RectangleShape,
+                shape = Radii.artworkShape,
+                contentDescription = null,
                 measure = true,
                 iconSize = 48.dp,
-                modifier = Modifier.fillMaxSize(),
-            )
-            Spacer(
-                Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0f to ValenColors.Background.copy(alpha = 0.30f),
-                            0.30f to Color.Transparent,
-                            0.55f to ValenColors.Background.copy(alpha = 0.45f),
-                            0.85f to ValenColors.Background.copy(alpha = 0.92f),
-                            1f to ValenColors.Background,
-                        ),
-                    ),
-            )
-            IconTap(
-                icon = Icons.Rounded.Settings,
-                label = "Settings",
-                onClick = onSettings,
-                tint = ValenColors.Text,
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(Space.step2),
+                    .size(cover)
+                    .pasted(seed = track.key.hashCode(), source = coverSource)
+                    .tilt()
+                    .taped(track.key)
+                    .hoverLift(coverSource)
+                    .tap(onClick = onOpen, shape = Radii.artworkShape, source = coverSource),
             )
-            Column(modifier = Modifier.padding(horizontal = chrome.gutter)) {
-                HeroWords(track = track, isPlaying = isPlaying, tones = tones, wide = false)
-                Spacer(Modifier.height(Space.step4))
-                HeroActions(isPlaying = isPlaying, onToggle = onToggle, onOpen = onOpen)
-                Spacer(Modifier.height(Space.step2))
-            }
         }
-        Spacer(Modifier.height(Space.step6))
-    } else {
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            // The cover grows a step with the window: at 248dp it reads as a stamp in the corner of
-            // a very wide band. It stays the anchor, the words stay the weight beside it.
-            val cover = when {
-                maxWidth >= 2000.dp -> HeroCoverWidest
-                maxWidth >= 1600.dp -> HeroCoverWide
-                else -> HeroCover
-            }
-            AmbientWash(tones = tones, modifier = Modifier.matchParentSize())
-            ContentColumn {
-                Spacer(Modifier.height(Space.step16))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(end = Space.step8),
-                    ) {
-                        HeroWords(track = track, isPlaying = isPlaying, tones = tones, wide = true)
-                        Spacer(Modifier.height(Space.step6))
-                        HeroActions(isPlaying = isPlaying, onToggle = onToggle, onOpen = onOpen)
-                    }
-                    Artwork(
-                        url = track.artworkUrl,
-                        shape = Radii.artworkShape,
-                        contentDescription = null,
-                        measure = true,
-                        iconSize = 48.dp,
-                        modifier = Modifier
-                            .size(cover)
-                            .tap(onClick = onOpen, shape = Radii.artworkShape),
-                    )
-                }
-                Spacer(Modifier.height(Space.step12))
-            }
-        }
-        Spacer(Modifier.height(Space.step2))
     }
 }
 
@@ -271,7 +458,7 @@ private val HeroCoverWidest = 360.dp
 
 /** "Playing from Spotify": the lead-in dimmed, the service in full white, then the song. */
 @Composable
-private fun HeroWords(track: Track, isPlaying: Boolean, tones: ArtworkTones, wide: Boolean) {
+private fun HeroWords(track: Track, isPlaying: Boolean, wide: Boolean) {
     Text(
         text = buildAnnotatedString {
             withStyle(SpanStyle(color = ValenColors.Text2)) {
@@ -284,12 +471,11 @@ private fun HeroWords(track: Track, isPlaying: Boolean, tones: ArtworkTones, wid
         maxLines = 1,
     )
     Spacer(Modifier.height(if (wide) Space.step2 else Space.step1))
-    Text(
+    KineticText(
         text = track.title,
         style = if (wide) TrackType.display else TrackType.title,
         color = ValenColors.Text,
         maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
     )
     Spacer(Modifier.height(if (wide) Space.step2 else Space.step1))
     Text(
@@ -314,98 +500,45 @@ private fun HeroActions(isPlaying: Boolean, onToggle: () -> Unit, onOpen: () -> 
 }
 
 /**
- * Nothing has been played: the app says hello and offers the one thing to do next. The search
- * prompt is a door to the search screen, not a second search field.
+ * Nothing has been played: the greeting above is the page's title, so this is one sentence about
+ * what the app can do right now and the door to search. The prompt is a door, not a second field.
  */
 @Composable
-private fun Welcome(connected: Int, onSearch: () -> Unit, onSettings: () -> Unit) {
-    val chrome = LocalChrome.current
-    Box(modifier = Modifier.fillMaxWidth()) {
-        AmbientWash(tones = ArtworkPalette.Neutral, strength = 0.55f, modifier = Modifier.matchParentSize())
-        ContentColumn {
-            if (chrome.compact) {
-                Row(modifier = Modifier.fillMaxWidth().padding(top = Space.step2)) {
-                    Spacer(Modifier.weight(1f))
-                    IconTap(icon = Icons.Rounded.Settings, label = "Settings", onClick = onSettings, tint = ValenColors.Text)
-                }
-                Spacer(Modifier.height(Space.step12))
-            } else {
-                Spacer(Modifier.height(Space.step24))
-            }
-            Text(
-                text = greetingFor(remember { currentHour() }),
-                style = if (chrome.compact) MaterialTheme.typography.displayMedium else MaterialTheme.typography.displayLarge,
-                color = ValenColors.Text,
-            )
-            Spacer(Modifier.height(Space.step3))
-            Text(
-                text = when (connected) {
-                    0 -> "No service is signed in yet. YouTube Music and SoundCloud play without an account, so you can start with a search."
-                    1 -> "One of your three services is signed in. One search covers all three."
-                    2 -> "Two of your three services are signed in. One search covers all three."
-                    else -> "All three services are signed in. One search covers them all."
-                },
-                style = MaterialTheme.typography.bodyLarge,
-                color = ValenColors.Text2,
-                modifier = Modifier.widthIn(max = 520.dp),
-            )
-            Spacer(Modifier.height(Space.step6))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .widthIn(max = 520.dp)
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .tap(onClick = onSearch, shape = Radii.pillShape, rest = ValenColors.Fill)
-                    .padding(horizontal = Space.step5),
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Search,
-                    contentDescription = null,
-                    tint = ValenColors.Text,
-                    modifier = Modifier.size(22.dp),
-                )
-                Spacer(Modifier.width(Space.step3))
-                Text(
-                    text = "Search every service",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = ValenColors.Text2,
-                    maxLines = 1,
-                )
-            }
-            Spacer(Modifier.height(if (chrome.compact) Space.step10 else Space.step16))
-        }
-    }
-}
-
-/**
- * What comes next, as a grid of quick tiles: one column on a phone, up to six across a wide window.
- * A tile carries a cover, a title and an artist, so it needs room before it earns a column.
- */
-@Composable
-private fun QuickGrid(tracks: List<Track>, onPlay: (Track) -> Unit) {
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val columns = when {
-            maxWidth >= 2100.dp -> 6
-            maxWidth >= 1500.dp -> 5
-            maxWidth >= 1150.dp -> 4
-            maxWidth >= 860.dp -> 3
-            maxWidth >= 560.dp -> 2
-            else -> 1
-        }
-        // Song titles are long; two tiles across a phone would show four letters of each.
-        val shown = if (columns == 1) tracks.take(4) else tracks
-        Column(verticalArrangement = Arrangement.spacedBy(Space.step2)) {
-            shown.chunked(columns).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(Space.step2)) {
-                    row.forEach { track ->
-                        QuickTile(track = track, onClick = { onPlay(track) }, modifier = Modifier.weight(1f))
-                    }
-                    // A short last row keeps its tiles the same width as the rows above it.
-                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
-                }
-            }
-        }
+private fun StartBody(connected: Int, onSearch: () -> Unit) {
+    Text(
+        text = when (connected) {
+            0 -> "No service is signed in yet. YouTube Music and SoundCloud play without an account, so you can start with a search."
+            1 -> "One of your three services is signed in. One search covers all three."
+            2 -> "Two of your three services are signed in. One search covers all three."
+            else -> "All three services are signed in. One search covers them all."
+        },
+        style = MaterialTheme.typography.bodyLarge,
+        color = ValenColors.Text2,
+        modifier = Modifier.widthIn(max = 520.dp),
+    )
+    Spacer(Modifier.height(Space.step6))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .widthIn(max = 520.dp)
+            .fillMaxWidth()
+            .height(56.dp)
+            .tap(onClick = onSearch, shape = Radii.pillShape, rest = ValenColors.Fill)
+            .padding(horizontal = Space.step5),
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Search,
+            contentDescription = null,
+            tint = ValenColors.Text,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(Space.step3))
+        Text(
+            text = "Search every service",
+            style = MaterialTheme.typography.bodyLarge,
+            color = ValenColors.Text2,
+            maxLines = 1,
+        )
     }
 }
 
@@ -415,7 +548,7 @@ private fun ServiceTiles(sessions: Map<ProviderId, SessionState>, onConnect: (Pr
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         if (maxWidth >= 880.dp) {
             Row(horizontalArrangement = Arrangement.spacedBy(Space.step2)) {
-                ProviderId.entries.forEach { provider ->
+                ProviderId.services.forEach { provider ->
                     ServiceTile(
                         provider = provider,
                         state = sessions[provider] ?: SessionState.SignedOut,
@@ -426,7 +559,7 @@ private fun ServiceTiles(sessions: Map<ProviderId, SessionState>, onConnect: (Pr
             }
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(Space.step2)) {
-                ProviderId.entries.forEach { provider ->
+                ProviderId.services.forEach { provider ->
                     ServiceTile(
                         provider = provider,
                         state = sessions[provider] ?: SessionState.SignedOut,

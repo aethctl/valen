@@ -214,7 +214,7 @@ internal fun ProgressRail(
         val filled = size.width * value.coerceIn(0f, 1f)
         if (filled > 0f) {
             drawRoundRect(
-                color = if (enabled) ValenColors.Text else ValenColors.Text3,
+                color = if (enabled) ValenColors.Primary else ValenColors.Text3,
                 topLeft = Offset(0f, cy - track / 2f),
                 // Never narrower than it is tall, so the first seconds of a song show as a dot, not a sliver.
                 size = Size(filled.coerceAtLeast(track), track),

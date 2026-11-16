@@ -34,6 +34,13 @@ distro that prefers its own packaging.
 - **A session bus.** MPRIS (`org.mpris.MediaPlayer2.valen`) is what the media
   widget, the lock screen, the volume/media keys and `playerctl` talk to. Without
   a session bus the app still runs and says so on stderr.
+- **A Discord desktop client, for the profile card.** Settings → Discord makes
+  the profile read "Listening to Valen" through the client's local socket
+  (`discord-ipc-N`); nothing is installed and no service runs. The card is named
+  after Valen's own Discord application, so the person sets nothing up. Its art
+  is uploaded once to that application: `discord/valen.png` here (1024×1024, the
+  key `valen`). Discord draws it as the small image over the cover's corner —
+  the only slot it offers for a mark on the cover.
 - **No root, no service, no setuid helper.**
 
 ## Profile and settings

@@ -58,6 +58,11 @@ object Layout {
     /** Text columns (settings, an empty state) stop here however wide the window is. */
     val readingMaxWidth = 720.dp
 
+    /** Settings on a wide window: its index and the open part beside it stop here. */
+    val settingsMaxWidth = 1040.dp
+    val settingsIndexWidth = 264.dp
+    val settingsIndexRow = 60.dp
+
     val rowHeight = 64.dp
 
     /** The gap between floating chrome and the window edge, and between two pieces of chrome. */
@@ -69,12 +74,38 @@ object Layout {
     val miniPlayerHeight = 64.dp
     val bottomNavHeight = 60.dp
 
+    /**
+     * "Your week" is a poster: designed at this width and scaled as a whole to fill the phone, or
+     * at [storyAspect] to the height of a wide window.
+     */
+    val storyDesignWidth = 400.dp
+    const val storyAspect = 9f / 16f
+
     /** Nothing interactive is smaller than this. */
     val hitTarget = 44.dp
 
     /** The width breakpoints. Layout follows width, never platform. */
     val wideFrom = 1000.dp
     val railFrom = 700.dp
+}
+
+/** Liquid glass, as measured on the chrome that carries it. */
+object Glass {
+    /** How far the page behind is blurred. */
+    val blur = 30.dp
+
+    /** How deep the rim's refraction reaches into the shape, and how far it bends what is behind. */
+    val rimDepth = 22.dp
+    val refraction = 14.dp
+
+    /** The pointer-follow highlight on the rim reaches this far around the pointer. */
+    val glintReach = 220.dp
+
+    /** Colour separation at the rim, as a share of the bend: a hint of prism, no more. */
+    const val dispersion = 0.14f
+
+    /** Colours behind glass are this much more vivid, so a dull blur still reads as the cover. */
+    const val vibrancy = 1.55f
 }
 
 /**

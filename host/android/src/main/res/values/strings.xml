@@ -1,6 +1,7 @@
 <resources>
     <string name="valen_app_name">Valen</string>
     <string name="valen_channel_playback">Playback</string>
+    <string name="valen_channel_downloads">Downloads</string>
     <string name="valen_play">Play</string>
     <string name="valen_pause">Pause</string>
     <string name="valen_next">Next</string>

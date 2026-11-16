@@ -10,8 +10,12 @@ kotlin {
     jvm()
     android {
         namespace = "app.valen.ui"
-        compileSdk = 36
+        compileSdk = 37
         minSdk = 29
+        // The KMP library plugin packs no Android resources unless asked: without this the APK had
+        // none of the Compose resources — no Bricolage or Inter (every screen fell back to the
+        // system font) and no TV frames (the welcome's picture step crashed the app).
+        androidResources { enable = true }
     }
 
     sourceSets {
@@ -25,6 +29,9 @@ kotlin {
             implementation(libs.coil.compose)
             implementation(libs.coil.network.okhttp)
             implementation(libs.kotlinx.coroutines.core)
+        }
+        androidMain.dependencies {
+            implementation(libs.androidx.activity.compose)
         }
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)

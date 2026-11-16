@@ -15,6 +15,8 @@ plumbing of Orpheon (formerly Myspoti), by kota-zo and contributors:
 - `libs/ytmusic` — the YouTube Music page script, `YtmPage`, `InnerTube` and parsers (`base/api-ytmusic`).
 - `host/desktop` — `CdpHost` / `CdpPageHost` (Chrome DevTools Protocol) (`base/host-cdp`).
 - `host/android` — WebView hosts and the media-session/notification playback service (`base/host-android`).
+  `SpotifyRelay` is a condensed port of Orpheon's `ControlRelay` (Spotify Connect requests sent from
+  the app, without the WebView's `X-Requested-With`), whose finding it relies on.
 
 Every source file carries its SPDX header. Orpheon's authors require credit, retention of notices, and
 that derivative works are published under GPL-3.0 with complete source. Valen complies.
@@ -28,6 +30,50 @@ bar, the cover's colours as soft drifting pools behind the player (`ui/component
 after Mochy's ambient backdrop, including sampling the cover's left and right halves separately and
 stepping the drift at 30 a second), and the sectioned drag-reorder queue. The code in those files is
 Valen's own.
+
+The playlist importer follows Mochy's matching approach (`core/…/TrackMatcher.kt`, after Mochy's
+`importer/TrackMatcher.kt`): a normalised title and artist comparison, a duration term, a version
+word that must agree, and an acceptance floor below which an entry is kept as unmatched rather than
+replaced by the wrong song. Valen's scorer is its own code and stricter than Mochy's — a version
+mismatch (remix, live, acoustic) scores zero outright, and a live-album pairing is capped below the
+acceptance floor.
+
+Liquid glass (`ui/components/Glass.kt`) takes Mochy's approach in `GlassKit` — record the content
+once, let each glass surface draw the part under itself, blurred — onto Compose Multiplatform's
+graphics layers, so it also draws on the desktop. The rim refraction shader, the droplet and the
+light are Valen's own.
+
+## Astra — https://github.com/Boof2015/astra (GPL-3.0)
+
+The parametric EQ backend (`core/ParametricEq.kt`, `core/SoundWebAudio.kt`, and
+`libs/audio/FfmpegEffects.kt`) adapts Astra's EQ filter model, built-in presets, preset JSON,
+AutoEQ import and native RBJ coefficient formulas. Astra is GPL-3.0; Valen is GPL-3.0.
+
+## Metrolist — https://github.com/mostafaalagamy/Metrolist (GPL-3.0)
+
+Valen's lyrics follow Metrolist's approach and port parts of its code:
+
+- `providers/lyrics/…/LyprioLyrics.kt` is a port of Metrolist's `LyprioLyricsProvider`: the
+  signed search (HMAC-SHA256 over the timestamp and body), protocol 2 with its polling, retry
+  delays and jitter, the fall back to protocol 1, the second search with every source, and the
+  check that a result names the right artist. No address or key of Metrolist's is included.
+- `core/…/LyricsFormats.kt` reads the formats Metrolist reads (MLX text and its version 2 JSON,
+  TTML word spans and backing vocals, enhanced LRC word tags, LRC offsets) and drops a leading
+  "Title - Artist" header the way Metrolist's `removeLyprioIntroHeader` does; the readers are
+  condensed to what Valen shows and are Valen's own code.
+- The view's model (a clock carried between position reports, a line activated by its timestamps,
+  the lines following on a spring and pausing after a scroll by hand, a tap that seeks) follows
+  Metrolist's `LyricsView`; the drawing, the marks and the motion are Valen's own.
+
+## The profile television
+
+The 3D television on the profile page is Valen's own model, rendered by Valen's own raymarcher
+(`tools/tv/render_tv.py`) into the frames under `ui/src/commonMain/composeResources/drawable/`.
+
+## Valen's tag
+
+The tag (`ui/components/TagStrokes.kt`, source drawing `docs/tag-source.png`) is the project
+owner's own drawing, traced to stroke centre lines for the app. It is part of Valen.
 
 ## Orpheon's interface — https://github.com/kota-zo/Orpheon (GPL-3.0)
 

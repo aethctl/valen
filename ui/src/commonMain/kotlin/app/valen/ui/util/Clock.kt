@@ -10,3 +10,9 @@ internal fun greetingFor(hour: Int): String = when (hour) {
     in 18..22 -> "Good evening"
     else -> "Still listening"
 }
+
+/** The time now as a notebook stamps it: "21:14". */
+internal expect fun clockText(): String
+
+/** Today as a notebook heads its page: "Sat 15 Nov". */
+internal expect fun dayText(): String

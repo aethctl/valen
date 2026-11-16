@@ -1,12 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 package app.valen.ui.components
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
@@ -23,7 +18,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -35,6 +32,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.valen.core.Track
+import app.valen.ui.menu.MenuOrigin
+import app.valen.ui.menu.MoreButton
+import app.valen.ui.menu.rememberSongMenuOpener
+import app.valen.ui.menu.songMenuOnRightClick
 import app.valen.ui.theme.Layout
 import app.valen.ui.theme.LocalChrome
 import app.valen.ui.theme.LocalReducedMotion
@@ -45,6 +46,7 @@ import app.valen.ui.theme.ValenColors
 import app.valen.ui.theme.timeStyle
 import app.valen.ui.util.formatTime
 import kotlin.math.PI
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.sin
 
@@ -66,14 +68,22 @@ fun QueueRow(
     onDragStarted: () -> Unit = {},
     onDragStopped: () -> Unit = {},
     dragDelta: (Float) -> Unit = {},
+    /** This row's place in the queue, for its menu (right click, long press); none without it. */
+    menuIndex: Int? = null,
 ) {
     val compact = LocalChrome.current.compact
+    val origin = menuIndex?.let { MenuOrigin.Queue(it) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .fillMaxWidth()
             .height(QueueRowHeight)
-            .tap(onClick = onPlay, shape = Radii.rowShape)
+            .then(if (origin != null) Modifier.songMenuOnRightClick(track, origin) else Modifier)
+            .tap(
+                onClick = onPlay,
+                shape = Radii.rowShape,
+                onLongClick = if (origin != null) rememberSongMenuOpener(track, origin) else null,
+            )
             .padding(start = Space.step2),
     ) {
         ArtworkSquare(
@@ -152,31 +162,32 @@ private fun Modifier.dragHandle(
     )
 }
 
-/** Three bars, moving only while the song is actually playing. */
+/**
+ * Three bars, moving only while the song is actually playing. They step on a timer
+ * ([Motion.PlayingBarsStepMs], like a level meter) and are read in the draw alone: an infinite
+ * transition here asked for every frame of the display while a song played, on whatever page
+ * showed the playing row and under the stage too (60 frames a second on the emulator, the
+ * whole window drawn each time).
+ */
 @Composable
 fun PlayingBars(playing: Boolean, tint: Color, modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
     val moving = playing && !reduced
-    val phase = if (moving) {
-        val transition = rememberInfiniteTransition(label = "playingBars")
-        val value by transition.animateFloat(
-            initialValue = 0f,
-            targetValue = (2 * PI).toFloat(),
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = Motion.PlayingBarsMs, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart,
-            ),
-            label = "playingBarsPhase",
-        )
-        value
-    } else {
-        0f
+    val phase = remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(moving) {
+        if (!moving) return@LaunchedEffect
+        val step = (2 * PI).toFloat() * Motion.PlayingBarsStepMs / Motion.PlayingBarsMs
+        while (true) {
+            delay(Motion.PlayingBarsStepMs.toLong())
+            phase.floatValue = (phase.floatValue + step) % (2 * PI).toFloat()
+        }
     }
     Canvas(modifier) {
         val barWidth = size.width / 5f
         val gap = barWidth
+        val at = phase.floatValue
         Bases.forEachIndexed { index, base ->
-            val level = if (moving) base * (0.45f + 0.55f * abs(sin(phase + index * 1.7f))) else base * 0.6f
+            val level = if (moving) base * (0.45f + 0.55f * abs(sin(at + index * 1.7f))) else base * 0.6f
             val height = size.height * level
             drawRoundRect(
                 color = tint,

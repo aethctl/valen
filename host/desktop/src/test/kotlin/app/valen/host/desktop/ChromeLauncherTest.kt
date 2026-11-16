@@ -55,6 +55,82 @@ class ChromeLauncherTest {
         }
     }
 
+    /**
+     * Every process check in the launcher reads the browser's argv, not just its executable:
+     * `ProcessHandle.Info.commandLine()` answered with argv[0] alone for this machine's Helium
+     * process, so the DevTools port and `--headless` were invisible and a sign-in reported "its
+     * window state could not be read". `/proc/<pid>/cmdline` has the whole line.
+     */
+    @Test
+    fun `the full command line is read from proc, not just argv zero`() {
+        val exe = listOf("/bin/bash", "/usr/bin/bash", "/bin/sh").map { Paths.get(it) }
+            .first { Files.isExecutable(it) }
+        val process = ProcessBuilder(
+            exe.toString(), "-c", "while :; do sleep 0.2; done",
+            "valen-marker-one", "--remote-debugging-port=39999",
+        ).redirectErrorStream(true).start()
+        try {
+            var line: String? = null
+            val deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5)
+            while (System.currentTimeMillis() < deadline) {
+                line = ChromeLauncher.procCommandLine(process.pid())
+                if (line?.contains("valen-marker-one") == true) break
+                Thread.sleep(20)
+            }
+            assertTrue(line?.contains("valen-marker-one") == true, "arguments were read: $line")
+            assertTrue(line?.contains("--remote-debugging-port=39999") == true, "flag was read: $line")
+        } finally {
+            process.destroyForcibly()
+            process.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+
+    /**
+     * The user agent is built from the engine's version, and a brand browser's own version is not
+     * it. Helium 0.21 printed "Helium 0.21.3.1 (Chromium 157.0.8103.78)"; the old reading took
+     * 0.21.3.1, so Chrome announced itself as `Chrome/0.0.0.0` and the Web Player answered
+     * "Unsupported browser" instead of loading the player.
+     */
+    @Test
+    fun `a brand browser's version output yields the engine's major version`() {
+        assertEquals("157", ChromeLauncher.engineMajor("Helium 0.21.3.1 (Chromium 157.0.8103.78)"))
+        assertEquals("157", ChromeLauncher.engineMajor("Google Chrome 157.0.8103.78"))
+        assertEquals("128", ChromeLauncher.engineMajor("Chromium 128.0.6613.137"))
+        assertEquals("109", ChromeLauncher.engineMajor("Microsoft Edge 109.0.1518.78"))
+        assertNull(ChromeLauncher.engineMajor("not a browser"), "no version to read")
+    }
+
+    /**
+     * The cache holds the *whole* user agent. It used to hold only the half the concatenation
+     * ended with, so the first launch announced a normal Chrome and every launch after it
+     * announced `Chrome/157.0.0.0 Safari/537.36` with no Mozilla prefix, which the Web Player
+     * refuses. A sign-in replaces the browser, so this was every launch after the first one.
+     */
+    @Test
+    fun `the cached user agent is the complete line on every call`() {
+        val dir = Files.createTempDirectory("chrome-ua")
+        val exe = dir.resolve("chrome")
+        try {
+            Files.writeString(exe, "#!/bin/sh\necho 'Chromium 157.0.8103.78'\n")
+            assertTrue(exe.toFile().setExecutable(true), "the stand-in browser is executable")
+
+            val launcher = ChromeLauncher(port = 39336)
+            val first = launcher.userAgent(exe)
+            val second = launcher.userAgent(exe)
+
+            assertEquals(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+                    "Chrome/157.0.0.0 Safari/537.36",
+                first,
+                "the agent is complete",
+            )
+            assertEquals(first, second, "the cached agent is the same complete line, not its tail")
+        } finally {
+            runCatching { Files.deleteIfExists(exe) }
+            runCatching { Files.deleteIfExists(dir) }
+        }
+    }
+
     /** Polls [ChromeLauncher.isHeadless] until it answers: a new process takes a moment to appear. */
     private fun awaitMode(launcher: ChromeLauncher): Boolean? {
         val deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(10)
@@ -102,6 +178,64 @@ class ChromeLauncherTest {
             fun shell(): Path = listOf("/bin/bash", "/usr/bin/bash", "/bin/sh")
                 .map { Paths.get(it) }
                 .first { Files.isExecutable(it) }
+        }
+    }
+
+    @Test
+    fun `a browser under its guardian ends when Valen's end of the pipe closes`() {
+        // Valen dying (a crash, a kill) closes the guardian's stdin; the browser must go with it.
+        val guardian = ProcessBuilder(guarded(listOf("sleep", "300"))).start()
+        var child: ProcessHandle? = null
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (child == null && System.nanoTime() < deadline) {
+            child = guardian.toHandle().descendants()
+                .filter { it.info().command().orElse("").endsWith("sleep") }
+                .findFirst().orElse(null)
+            if (child == null) Thread.sleep(50)
+        }
+        org.junit.jupiter.api.Assertions.assertNotNull(child, "the guarded command never started")
+        guardian.outputStream.close()
+        org.junit.jupiter.api.Assertions.assertTrue(guardian.waitFor(5, java.util.concurrent.TimeUnit.SECONDS))
+        val gone = System.nanoTime() + 3_000_000_000L
+        while (child!!.isAlive && System.nanoTime() < gone) Thread.sleep(50)
+        org.junit.jupiter.api.Assertions.assertFalse(child.isAlive, "the browser outlived Valen")
+    }
+
+    @Test
+    fun `a guardian ends by itself when its browser exits`() {
+        val guardian = ProcessBuilder(guarded(listOf("sleep", "1"))).start()
+        org.junit.jupiter.api.Assertions.assertTrue(guardian.waitFor(8, java.util.concurrent.TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `a snap or Flatpak browser is told apart, and its profile goes where its sandbox can write`() {
+        val dir = Files.createTempDirectory("valen-sandbox")
+        try {
+            val ubuntuWrapper = dir.resolve("chromium-browser").also {
+                Files.writeString(it, "#!/bin/sh\n# Ubuntu's transitional package\nexec /snap/bin/chromium \"$@\"\n")
+            }
+            val flatpakWrapper = dir.resolve("chromium-flatpak").also {
+                Files.writeString(it, "#!/bin/sh\nexec flatpak run org.chromium.Chromium \"$@\"\n")
+            }
+            val plain = dir.resolve("chrome").also { Files.write(it, byteArrayOf(0x7f, 'E'.code.toByte(), 'L'.code.toByte(), 'F'.code.toByte())) }
+
+            assertEquals(ChromeLauncher.Companion.Sandbox.Snap("chromium"), ChromeLauncher.sandboxOf(ubuntuWrapper))
+            assertEquals(ChromeLauncher.Companion.Sandbox.Snap("chromium"), ChromeLauncher.sandboxOf(Paths.get("/snap/bin/chromium")))
+            assertEquals(ChromeLauncher.Companion.Sandbox.Flatpak("org.chromium.Chromium"), ChromeLauncher.sandboxOf(flatpakWrapper))
+            assertEquals(
+                ChromeLauncher.Companion.Sandbox.Flatpak("com.google.Chrome"),
+                ChromeLauncher.sandboxOf(Paths.get("/var/lib/flatpak/exports/bin/com.google.Chrome")),
+            )
+            assertNull(ChromeLauncher.sandboxOf(plain))
+
+            if (System.getenv("VALEN_CHROME_PROFILE").isNullOrBlank()) {
+                val home = System.getProperty("user.home")
+                assertEquals(Paths.get(home, "snap", "chromium", "common", "valen-chrome"), ChromeLauncher.profileFor(ubuntuWrapper))
+                assertEquals(Paths.get(home, ".var", "app", "org.chromium.Chromium", "data", "valen-chrome"), ChromeLauncher.profileFor(flatpakWrapper))
+                assertEquals(ChromeLauncher.defaultProfileDir(), ChromeLauncher.profileFor(plain))
+            }
+        } finally {
+            dir.toFile().deleteRecursively()
         }
     }
 }

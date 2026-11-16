@@ -71,7 +71,12 @@ class DesktopHosts(
 
     override val windowError: String? get() = chrome.lastError
 
-    private fun dropHosts() {
+    /** True while a browser is coming up; a probe then has no page to ask. */
+    override val browserStarting: Boolean get() = chrome.starting
+
+    private suspend fun dropHosts() = lock.withLock { closeHosts() }
+
+    private fun closeHosts() {
         spotifyHost?.close()
         ytMusicHost?.close()
         soundCloudHost?.close()
@@ -105,19 +110,26 @@ class DesktopHosts(
     /** Why Chrome is not there, when [start] returned false. */
     val startError: String? get() = chrome.lastError
 
-    /** Whether the browser Valen plays Spotify through still answers. */
-    suspend fun browserAlive(): Boolean = chrome.probe()
+    /**
+     * The browser's cookies for [url], read through the Web Player tab that already exists. Only a
+     * reachable browser answers: this never launches Chrome, so an account read cannot start one.
+     * Null also means no browser is running, which is the same thing to a caller (no session).
+     */
+    suspend fun cookiesFor(url: String): String? =
+        runCatching { spotify().cookieHeader(url) }.getOrNull()
+
+    /**
+     * Whether the browser Valen plays Spotify through still answers. A browser that is being
+     * started (or replaced by a sign-in) counts as alive: the port is briefly free during a
+     * restart, and taking that for a crash would declare Spotify closed in the middle of a login.
+     */
+    suspend fun browserAlive(): Boolean = chrome.starting || chrome.probe()
 
     override fun close() {
         spotifySignIn.close()
         ytMusicSignIn.close()
         soundCloudSignIn.close()
-        spotifyHost?.close()
-        ytMusicHost?.close()
-        soundCloudHost?.close()
-        spotifyHost = null
-        ytMusicHost = null
-        soundCloudHost = null
+        closeHosts()
         chrome.close()
     }
 

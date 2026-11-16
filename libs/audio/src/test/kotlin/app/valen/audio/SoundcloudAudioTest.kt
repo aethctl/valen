@@ -2,7 +2,10 @@
 package app.valen.audio
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import kotlinx.serialization.json.Json
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -20,5 +23,19 @@ class SoundcloudAudioTest {
     @Test
     fun `a page without the boot data yields nothing`() {
         assertNull(SoundcloudAudio.CLIENT_ID.find("<html><body>Sign in</body></html>"))
+    }
+
+    private fun row(vararg protocols: String) = Json.parseToJsonElement(
+        """{"kind":"track","id":1,"title":"t","media":{"transcodings":[${protocols.joinToString(",") { "{\"url\":\"u\",\"format\":{\"protocol\":\"$it\"}}" }}]}}""",
+    )
+
+    @Test
+    fun `a track streamed only copy-protected is told apart from one that plays`() {
+        val audio = SoundcloudAudio()
+        assertTrue(audio.protectedOnly(row("cbc-encrypted-hls", "ctr-encrypted-hls")))
+        assertFalse(audio.protectedOnly(row("cbc-encrypted-hls", "hls")))
+        assertFalse(audio.protectedOnly(row("progressive")))
+        // A row without its streams listed is resolved when played, not judged here.
+        assertFalse(audio.protectedOnly(Json.parseToJsonElement("""{"kind":"track","id":1,"title":"t"}""")))
     }
 }

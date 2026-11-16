@@ -42,7 +42,11 @@ class YoutubeAudio(
     suspend fun resolve(videoId: String, quality: AudioQuality): ResolvedStream = withContext(Dispatchers.IO) {
         init()
         val info = try {
-            StreamInfo.getInfo(ServiceList.YouTube, "https://music.youtube.com/watch?v=$videoId")
+            // By the id, never a watch URL: NewPipe checks a URL's host by upper-casing it in the
+            // device's language, and in Turkish "music" becomes "MUSİC" (dotted İ), so every song
+            // was refused with "URL not accepted" on a phone set to Turkish or Azerbaijani.
+            val service = ServiceList.YouTube
+            StreamInfo.getInfo(service.getStreamExtractor(service.streamLHFactory.fromId(videoId)))
         } catch (e: ContentNotAvailableException) {
             throw IllegalStateException("YouTube Music has no stream for this song: ${e.message}")
         } catch (e: AgeRestrictedContentException) {
@@ -60,6 +64,7 @@ class YoutubeAudio(
         ResolvedStream(
             url = chosen.content,
             durationMs = if (info.duration > 0) info.duration * 1000 else 0L,
+            checkEarlyEnd = info.duration > 0,
         )
     }
 

@@ -307,21 +307,61 @@ object YtmParse {
         return album to songs
     }
 
-    /** An artist page: the artist, its top songs, its releases and the artists like it. */
-    class ArtistPage(val artist: Artist, val songs: List<Track>, val albums: List<Album>, val related: List<Artist>, val about: String?)
+    /**
+     * An artist page: the artist, its top songs, its releases (each with its kind: the shelf it is
+     * on says it, a single's card often shows only its year), the playlists it is featured on, the
+     * artists like it, and its subscriber count as the page writes it ("2.27M").
+     */
+    class ArtistPage(
+        val artist: Artist,
+        val songs: List<Track>,
+        val albums: List<Album>,
+        val related: List<Artist>,
+        val about: String?,
+        val playlists: List<Playlist> = emptyList(),
+        val subscribers: String? = null,
+    )
 
     fun artist(channelId: String, answer: JsonElement): ArtistPage {
         val h = header(answer)
         val artist = Artist(uri("artist", channelId), h?.title.orEmpty(), h?.images.orEmpty())
         val songs = deep(answer, "musicShelfRenderer").firstOrNull()?.let { s -> deep(s, "musicResponsiveListItemRenderer").mapNotNull(::row) }
             .orEmpty().filterIsInstance<Item.Song>().map { it.track }
-        val cards = cards(answer)
+        val own = listOf(ArtistRef(artist.uri, artist.name))
+        val albums = ArrayList<Album>()
+        val playlists = ArrayList<Playlist>()
+        val related = ArrayList<Artist>()
+        for (shelf in deep(answer, "musicCarouselShelfRenderer")) {
+            val title = deep(shelf, "musicCarouselShelfBasicHeaderRenderer").firstOrNull()?.let { text(it.o("title")) }.orEmpty().lowercase()
+            val items = shelf.a("contents")?.mapNotNull { it.o()?.o("musicTwoRowItemRenderer")?.let(::twoRow) }.orEmpty()
+            val kind = when {
+                "single" in title || Regex("""\bep""").containsMatchIn(title) -> "single"
+                "album" in title -> "album"
+                else -> null
+            }
+            for (item in items) when (item) {
+                is Item.AlbumItem -> albums += item.album.copy(
+                    artists = item.album.artists.ifEmpty { own },
+                    type = kind ?: item.album.type,
+                )
+                is Item.PlaylistItem -> playlists += item.playlist
+                is Item.ArtistItem -> if (item.artist.uri != artist.uri) related += item.artist
+                is Item.Song -> Unit
+            }
+        }
+        val subscribers = deep(answer, "subscribeButtonRenderer").firstNotNullOfOrNull { text(it.o("subscriberCountText")) }
         return ArtistPage(
-            artist, songs,
-            cards.filterIsInstance<Item.AlbumItem>().map { a -> a.album.copy(artists = a.album.artists.ifEmpty { listOf(ArtistRef(artist.uri, artist.name)) }) },
-            cards.filterIsInstance<Item.ArtistItem>().map { it.artist }.filter { it.uri != artist.uri },
-            h?.description,
+            artist, songs, albums.distinctBy { it.uri }, related.distinctBy { it.uri }, h?.description,
+            playlists.distinctBy { it.uri }, subscribers,
         )
+    }
+
+    /** "2.27M", "830K", "12,345" as a number. */
+    fun count(text: String?): Long? {
+        val m = Regex("""([\d.,]+)\s*([KMB])?""", RegexOption.IGNORE_CASE).find(text ?: return null) ?: return null
+        val n = m.groupValues[1].replace(",", "").toDoubleOrNull() ?: return null
+        val scale = when (m.groupValues[2].uppercase()) { "K" -> 1e3; "M" -> 1e6; "B" -> 1e9; else -> 1.0 }
+        return (n * scale).toLong()
     }
 
     /** A song's own row in its watch-next list (`playlistPanelVideoRenderer`), or null. */

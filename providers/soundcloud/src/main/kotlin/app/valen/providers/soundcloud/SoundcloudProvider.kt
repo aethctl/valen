@@ -9,6 +9,9 @@ import app.valen.core.MusicProvider
 import app.valen.core.PlayerSnapshot
 import app.valen.core.ProviderEvent
 import app.valen.core.ProviderId
+import app.valen.core.SoundWebAudio
+import app.valen.core.SoundEffects
+import app.valen.core.EffectSupport
 import app.valen.core.ProviderSignIn
 import app.valen.core.SessionState
 import app.valen.core.Track
@@ -50,7 +53,11 @@ class SoundcloudProvider(
     /** Sign-in lives on the platform's browser; the adapter only reports it. */
     override val session: StateFlow<SessionState> = signIn.state
 
-    private val bridge = PageBridge(host, SoundcloudScript.SCRIPT, scope)
+    // The page's script, and Valen's sound engine beside it (injected with it after every load).
+    private val bridge = PageBridge(host, SoundcloudScript.SCRIPT + "\n;" + SoundWebAudio.SCRIPT, scope)
+
+    /** The effects last asked for, put on again whenever a page comes up. */
+    @Volatile private var effects: SoundEffects = SoundEffects.FLAT
 
     private val _player = MutableStateFlow<PlayerSnapshot?>(null)
     override val player: StateFlow<PlayerSnapshot?> = _player.asStateFlow()
@@ -75,6 +82,7 @@ class SoundcloudProvider(
         // A page gone took its audio with it: the snapshot it left is not current any more.
         scope.launch {
             bridge.ready.collect { ready ->
+                if (ready) applyEffects()
                 if (!ready) {
                     endedSeen = false
                     errorSeen = null
@@ -87,6 +95,19 @@ class SoundcloudProvider(
     }
 
     override suspend fun connect() = signIn.connect()
+
+    /** The page's own audio element is routed through Web Audio ([SoundWebAudio]). */
+    override val effectSupport: EffectSupport get() = EffectSupport.Full
+
+    override suspend fun setEffects(effects: SoundEffects) {
+        this.effects = effects
+        applyEffects()
+    }
+
+    private suspend fun applyEffects() {
+        if (!bridge.ready.value) return
+        runCatching { host.evaluate(SoundWebAudio.call(effects)) }
+    }
 
     override suspend fun disconnect() {
         runCatching { if (bridge.ready.value) bridge.call("stop") }
@@ -209,7 +230,7 @@ class SoundcloudProvider(
         if (s.ended && track != null && (s.trackId == null || s.trackId == track.id)) {
             if (!endedSeen) {
                 endedSeen = true
-                _events.tryEmit(ProviderEvent.TrackEnded)
+                _events.tryEmit(ProviderEvent.TrackEnded(track.key))
             }
         } else {
             endedSeen = false

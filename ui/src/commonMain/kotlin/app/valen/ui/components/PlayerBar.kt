@@ -1,7 +1,23 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 package app.valen.ui.components
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.ui.unit.lerp
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.Dp
+import app.valen.ui.theme.LocalReducedMotion
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -24,6 +40,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.valen.core.Track
+import app.valen.ui.menu.MenuOrigin
+import app.valen.ui.menu.MoreButton
+import app.valen.ui.menu.rememberSongMenuOpener
+import app.valen.ui.menu.songMenuOnRightClick
 import app.valen.ui.artwork.ArtworkTones
 import app.valen.ui.theme.Layout
 import app.valen.ui.theme.Motion
@@ -34,7 +54,8 @@ import app.valen.ui.theme.ValenColors
 /**
  * The player on wide layouts: a capsule floating over the bottom of the content, warmed by the
  * cover of what is playing. One line: the song, the transport, the position, then queue and
- * volume. As the window narrows it gives up volume first, then the times, then the rail.
+ * volume, with shuffle and repeat either side of the transport. As the window narrows it gives up
+ * volume first, then the times, then shuffle and repeat, then the rail.
  *
  * Cover and title open the stage.
  */
@@ -57,18 +78,41 @@ fun PlayerBar(
     onVolume: (Float) -> Unit,
     onQueue: () -> Unit,
     modifier: Modifier = Modifier,
+    modes: PlayModes? = null,
 ) {
     val tint by animateColorAsState(tones.chrome, Motion.tint(), label = "dockTint")
+    val reduced = LocalReducedMotion.current
+    // The player is born as a drop the size of its own height and spreads into the capsule.
+    val bloom = remember { Animatable(if (reduced) 1f else 0f) }
+    LaunchedEffect(Unit) { if (!reduced) bloom.animateTo(1f, Motion.bloom()) }
     BoxWithConstraints(
+        contentAlignment = Alignment.Center,
         modifier = modifier
             .widthIn(max = Layout.dockMaxWidth)
             .fillMaxWidth()
-            .height(Layout.dockHeight)
-            .glass(Radii.pillShape, tint = tint),
+            .height(Layout.dockHeight),
+    ) {
+    val full = maxWidth
+    val spread = bloom.value
+    GlassSurface(
+        shape = Radii.pillShape,
+        tint = tint,
+        sweepKey = track.key,
+        orbit = isPlaying,
+        modifier = Modifier
+            .width(lerp(Layout.dockHeight, full, spread))
+            .fillMaxHeight(),
+    ) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .requiredWidth(full)
+            .fillMaxHeight()
+            .graphicsLayer { alpha = ((bloom.value - 0.45f) / 0.55f).coerceIn(0f, 1f) },
     ) {
         val showVolume = maxWidth >= 860.dp
         val showTimes = maxWidth >= 640.dp
         val showRail = maxWidth >= 520.dp
+        val showModes = maxWidth >= 860.dp
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -83,23 +127,12 @@ fun PlayerBar(
                     .tap(onClick = onOpen, shape = Radii.pillShape)
                     .padding(end = Space.step3),
             ) {
-                ArtworkSquare(url = track.artworkUrl, size = 48.dp, measure = true)
-                Column(modifier = Modifier.padding(start = Space.step3)) {
-                    Text(
-                        text = track.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = ValenColors.Text,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "${track.artist}  ·  ${track.provider.short}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ValenColors.Text2,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                PlayerCover(url = track.artworkUrl, size = 48.dp, playing = isPlaying)
+                SongLines(
+                    track = track,
+                    detail = "${track.artist}  ·  ${track.provider.short}",
+                    modifier = Modifier.padding(start = Space.step3),
+                )
             }
             TransportBar(
                 isPlaying = isPlaying,
@@ -112,6 +145,7 @@ fun PlayerBar(
                 playSize = 34.dp,
                 skipSize = 26.dp,
                 gap = 0.dp,
+                modes = modes.takeIf { showModes },
             )
             if (showRail) {
                 Spacer(Modifier.width(Space.step3))
@@ -129,10 +163,80 @@ fun PlayerBar(
                 horizontalArrangement = Arrangement.spacedBy(Space.step1),
             ) {
                 IconTap(icon = Icons.AutoMirrored.Rounded.QueueMusic, label = "Queue", onClick = onQueue)
+                MoreButton(track = track, origin = MenuOrigin.Player)
                 if (showVolume) {
                     VolumeSlider(volume = volume, onVolume = onVolume, railWidth = 88.dp)
                 }
             }
         }
     }
+    }
+    }
+}
+
+/**
+ * A song's two lines in the player. When the song changes, the new lines rise into place as the
+ * old ones lift away, so the player says "next" rather than flickering.
+ */
+@Composable
+internal fun SongLines(track: Track, detail: String, modifier: Modifier = Modifier) {
+    val reduced = LocalReducedMotion.current
+    AnimatedContent(
+        targetState = track,
+        contentKey = { it.key },
+        transitionSpec = {
+            if (reduced) {
+                fadeIn(Motion.fade()) togetherWith fadeOut(Motion.fade())
+            } else {
+                (slideInVertically(Motion.enter()) { it / 2 } + fadeIn(Motion.enter())) togetherWith
+                    (slideOutVertically(Motion.exit()) { -it / 2 } + fadeOut(Motion.exit()))
+            }
+        },
+        modifier = modifier,
+        label = "songLines",
+    ) { shown ->
+        Column {
+            Text(
+                text = shown.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = ValenColors.Text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = if (shown.key == track.key) detail else shown.artist,
+                style = MaterialTheme.typography.bodySmall,
+                color = ValenColors.Text2,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * The player's cover. A new song's cover drops in with a little spring, and while the song plays
+ * the cover sits full size; paused, it sinks back a step, so the player shows its state at a
+ * glance even with the transport out of view.
+ */
+@Composable
+internal fun PlayerCover(url: String?, size: Dp, playing: Boolean, modifier: Modifier = Modifier) {
+    val reduced = LocalReducedMotion.current
+    val sink by animateFloatAsState(
+        targetValue = if (playing || reduced) 1f else 0.86f,
+        animationSpec = Motion.lean(),
+        label = "coverSink",
+    )
+    val arrive = remember(url) { Animatable(if (reduced) 1f else 0.6f) }
+    LaunchedEffect(url) { if (!reduced) arrive.animateTo(1f, Motion.squish()) }
+    ArtworkSquare(
+        url = url,
+        size = size,
+        measure = true,
+        modifier = modifier.graphicsLayer {
+            val s = sink * arrive.value
+            scaleX = s
+            scaleY = s
+        },
+    )
 }

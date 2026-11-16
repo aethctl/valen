@@ -71,13 +71,13 @@ fun <T> SegmentedFilter(
                 .width(segment)
                 .fillMaxHeight()
                 .clip(Radii.pillShape)
-                .background(ValenColors.Text),
+                .background(ValenColors.Primary),
         )
         Row(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
             options.forEach { option ->
                 val on = option == selected
                 val ink by animateColorAsState(
-                    targetValue = if (on) ValenColors.OnLight else ValenColors.Text2,
+                    targetValue = if (on) ValenColors.OnPrimary else ValenColors.Text2,
                     animationSpec = Motion.press(),
                     label = "segmentInk",
                 )
@@ -143,7 +143,7 @@ fun FilterPill(
     val hovered by source.collectIsHoveredAsState()
     val fill by animateColorAsState(
         targetValue = when {
-            selected -> ValenColors.Text
+            selected -> ValenColors.Primary
             hovered -> ValenColors.FillStrong
             else -> ValenColors.Fill
         },
@@ -168,7 +168,7 @@ fun FilterPill(
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (selected) ValenColors.OnLight else ValenColors.Text,
+                color = if (selected) ValenColors.OnPrimary else ValenColors.Text,
                 maxLines = 1,
             )
         }

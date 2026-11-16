@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -26,6 +27,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.valen.core.Track
+import app.valen.ui.menu.MenuOrigin
+import app.valen.ui.menu.MoreButton
+import app.valen.ui.menu.rememberSongMenuOpener
+import app.valen.ui.menu.songMenuOnRightClick
 import app.valen.ui.artwork.ArtworkTones
 import app.valen.ui.theme.Layout
 import app.valen.ui.theme.Motion
@@ -53,11 +58,19 @@ fun MiniPlayer(
 ) {
     val progress = if (durationMs > 0L) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
     val tint by animateColorAsState(tones.chrome, Motion.tint(), label = "miniTint")
-    Box(
+    val bar by animateColorAsState(tones.bright, Motion.tint(), label = "miniBar")
+    GlassSurface(
+        shape = Radii.pillShape,
+        tint = tint,
+        sweepKey = track.key,
+        orbit = isPlaying,
         modifier = modifier
             .fillMaxWidth()
-            .height(Layout.miniPlayerHeight)
-            .glass(Radii.pillShape, tint = tint)
+            .height(Layout.miniPlayerHeight),
+    ) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
             .drawWithContent {
                 drawContent()
                 // Inset by the capsule's own radius, so the line never touches the curve.
@@ -68,7 +81,7 @@ fun MiniPlayer(
                 val corner = CornerRadius(thickness / 2f, thickness / 2f)
                 drawRoundRect(ValenColors.Fill, Offset(inset, y), Size(full, thickness), corner)
                 if (progress > 0f) {
-                    drawRoundRect(ValenColors.Text, Offset(inset, y), Size(full * progress, thickness), corner)
+                    drawRoundRect(bar, Offset(inset, y), Size(full * progress, thickness), corner)
                 }
             },
     ) {
@@ -77,37 +90,18 @@ fun MiniPlayer(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight()
-                .tap(onClick = onOpen)
+                .tap(onClick = onOpen, onLongClick = rememberSongMenuOpener(track, MenuOrigin.Player))
                 .padding(start = Space.step2, end = Space.step2),
         ) {
-            ArtworkSquare(url = track.artworkUrl, size = 44.dp, measure = true)
-            Column(
+            PlayerCover(url = track.artworkUrl, size = 44.dp, playing = isPlaying)
+            SongLines(
+                track = track,
+                detail = track.artist,
                 modifier = Modifier
                     .weight(1f)
                     .padding(horizontal = Space.step3),
-            ) {
-                Text(
-                    text = track.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = ValenColors.Text,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = track.artist,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = ValenColors.Text2,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            IconTap(
-                icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                label = if (isPlaying) "Pause" else "Play",
-                onClick = onToggle,
-                tint = ValenColors.Text,
-                iconSize = 30.dp,
             )
+            PlayToggle(isPlaying = isPlaying, onToggle = onToggle, iconSize = 30.dp)
             IconTap(
                 icon = Icons.Rounded.SkipNext,
                 label = "Next",
@@ -117,5 +111,6 @@ fun MiniPlayer(
                 iconSize = 26.dp,
             )
         }
+    }
     }
 }

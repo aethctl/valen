@@ -25,6 +25,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.valen.core.ProviderId
 import app.valen.core.Track
+import app.valen.ui.menu.MenuOrigin
+import app.valen.ui.menu.MoreButton
+import app.valen.ui.menu.rememberSongMenuOpener
+import app.valen.ui.menu.songMenuOnRightClick
 import app.valen.ui.theme.Layout
 import app.valen.ui.theme.LocalChrome
 import app.valen.ui.theme.Radii
@@ -40,6 +44,12 @@ import app.valen.ui.util.formatTime
  * The row that is playing takes the screen's accent for its title and shows the playing bars over
  * its cover, so the list always says where the music is.
  */
+/**
+ * Looks a song up ahead because the person is about to pick it ([PlaybackCoordinator.warm]); the
+ * shell provides it, nothing does by default.
+ */
+val LocalWarm = androidx.compose.runtime.staticCompositionLocalOf<(Track) -> Unit> { {} }
+
 @Composable
 fun ResultRow(
     track: Track,
@@ -52,6 +62,8 @@ fun ResultRow(
     playing: Boolean = false,
     queued: Boolean = false,
     accent: Color = ValenColors.Text,
+    /** Where the song's menu (⋯, right click, long press) says it was opened; none without it. */
+    menu: MenuOrigin? = null,
 ) {
     val compact = LocalChrome.current.compact
     Row(
@@ -59,7 +71,13 @@ fun ResultRow(
         modifier = modifier
             .fillMaxWidth()
             .height(Layout.rowHeight)
-            .tap(onClick = onPlay, shape = Radii.rowShape)
+            .then(if (menu != null) Modifier.songMenuOnRightClick(track, menu) else Modifier)
+            .tap(
+                onClick = onPlay,
+                shape = Radii.rowShape,
+                onLongClick = if (menu != null) rememberSongMenuOpener(track, menu) else null,
+                onIntent = LocalWarm.current.let { warm -> { warm(track) } },
+            )
             .padding(start = Space.step2),
     ) {
         StatefulCover(url = track.artworkUrl, size = 48.dp, current = current, playing = playing)
@@ -68,12 +86,14 @@ fun ResultRow(
                 .weight(1f)
                 .padding(horizontal = Space.step3),
         ) {
+            // The song that is playing is gone over with a marker in the cover's colour.
             Text(
                 text = track.title,
                 style = MaterialTheme.typography.titleMedium,
-                color = if (current) accent else ValenColors.Text,
+                color = ValenColors.Text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.markerSwipe(active = current, color = ValenColors.Container, seed = track.key.hashCode()),
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Measured first, so a long list of services can never squeeze the artist out.
@@ -115,8 +135,11 @@ fun ResultRow(
             label = if (queued) "In the queue" else "Add to queue",
             onClick = onEnqueue,
             enabled = !queued,
-            modifier = Modifier.padding(end = Space.step1),
+            modifier = Modifier.padding(end = if (menu != null) 0.dp else Space.step1),
         )
+        if (menu != null) {
+            MoreButton(track = track, origin = menu, modifier = Modifier.padding(end = Space.step1))
+        }
     }
 }
 

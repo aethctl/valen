@@ -6,6 +6,8 @@
  */
 package app.valen.host.android
 
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import android.content.Context
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -149,14 +151,22 @@ class AndroidSignIn private constructor(
         private const val CONNECTING_POLL_MS = 700L
         private const val IDLE_POLL_MS = 4_000L
 
-        /** Spotify: connected when the Web Player page is up and it is not a sign-in page. */
+        /**
+         * Spotify: the sp_dc cookie of open.spotify.com is the account, as on the desktop. Reading
+         * the page instead ("is the player up?") reported a signed-in account as signed out every
+         * time the Web Player reloaded, its renderer restarted, or it parked itself on the light
+         * /preferences route, and the UI offered a sign-in that was not needed.
+         */
         fun spotify(host: WebPlayerHost, scope: CoroutineScope): AndroidSignIn {
             lateinit var signIn: AndroidSignIn
             signIn = AndroidSignIn(
                 provider = ProviderId.SPOTIFY,
                 scope = scope,
                 open = { AndroidSignInHub.show(spotifyRequest(host, signIn)) },
-                probe = { if (host.playerReady) SessionState.Connected(null) else SessionState.SignedOut },
+                probe = {
+                    val header = withContext(Dispatchers.Main.immediate) { host.cookies().getCookie(SPOTIFY_ORIGIN) }
+                    if (spotifyAccount(header)) SessionState.Connected(null) else SessionState.SignedOut
+                },
                 signOut = { host.logout() },
             )
             return signIn
@@ -216,6 +226,11 @@ class AndroidSignIn private constructor(
             )
             return signIn
         }
+
+        private const val SPOTIFY_ORIGIN = "https://open.spotify.com"
+
+        /** Whether a cookie header for open.spotify.com carries Spotify's account cookie. */
+        fun spotifyAccount(cookieHeader: String?): Boolean = !parseCookieHeader(cookieHeader)["sp_dc"].isNullOrBlank()
 
         /** The SAPISID cookie the YouTube Music auth header is made from, when the session has one. */
         fun sapisid(cookieHeader: String?): String? {

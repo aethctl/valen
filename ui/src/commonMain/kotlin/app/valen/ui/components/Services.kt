@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material3.Icon
@@ -37,6 +38,7 @@ fun ProviderId.glyph(): ImageVector = when (this) {
     ProviderId.SPOTIFY -> Icons.Rounded.GraphicEq
     ProviderId.YOUTUBE_MUSIC -> Icons.Rounded.SmartDisplay
     ProviderId.SOUNDCLOUD -> Icons.Rounded.Cloud
+    ProviderId.LOCAL -> Icons.Rounded.FolderOpen
 }
 
 /** The status dot is the only coloured element on a service's surface. */

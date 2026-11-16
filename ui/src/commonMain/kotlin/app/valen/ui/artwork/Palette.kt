@@ -2,8 +2,12 @@
 package app.valen.ui.artwork
 
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import app.valen.ui.theme.Tonal
+import app.valen.ui.theme.ValenScheme
 
 /** A tiny copy of an artwork: enough pixels to find its colour, small enough to forget. */
 internal class PixelMap(val width: Int, val height: Int, val argb: IntArray) {
@@ -29,20 +33,26 @@ internal class PixelMap(val width: Int, val height: Int, val argb: IntArray) {
  * cover looks like.
  */
 @Immutable
-class ArtworkTones(val accent: Color, val left: Color, val right: Color) {
-    /** Small marks on black: the playing bars, the title of the row that is playing. */
-    val bright: Color = accent.atLuma(0.74f)
+class ArtworkTones(val accent: Color, val left: Color, val right: Color, black: Boolean = false) {
+    /**
+     * The scheme this artwork seeds: one hue, in tones. Everything below is taken from it, so a
+     * cover's colour reaches the screen as one soft family, never as its raw, saturated self.
+     */
+    val scheme: ValenScheme = Tonal.scheme(accent, black)
+
+    /** Small marks on the page: the tag, the marker lines, the playing bars, the paint of a pour. */
+    val bright: Color = scheme.primary
 
     /** The floor of a wash. */
-    val deep: Color = accent.atLuma(0.08f)
+    val deep: Color = scheme.washFloor
 
-    /** The tint of the floating player: a step above the floor, so it shows through the glass. */
-    val chrome: Color = accent.atLuma(0.15f)
+    /** The tint of the floating player, mixed into its glass. */
+    val chrome: Color = scheme.chrome
 
-    /** The three pools of a wash, dark enough for white text at any point. */
-    val poolLeft: Color = left.atLuma(0.30f)
-    val poolRight: Color = right.atLuma(0.26f)
-    val poolAccent: Color = accent.atLuma(0.20f)
+    /** The three pools of a wash: one hue at three depths, dark enough for white text anywhere. */
+    val poolLeft: Color = scheme.washHigh
+    val poolRight: Color = scheme.washMid
+    val poolAccent: Color = scheme.washLow
 
     override fun equals(other: Any?): Boolean =
         other is ArtworkTones && other.accent == accent && other.left == left && other.right == right
@@ -190,16 +200,25 @@ internal fun Color.atLuma(target: Float): Color {
  * one entry per song played, not one per search result.
  */
 object ArtworkPalette {
-    val Fallback = Color(0xFFD9D9DE)
+    val Fallback = Tonal.DefaultSeed
 
-    /** No artwork, or artwork with no colour in it: a neutral grey wash. */
-    val Neutral = ArtworkTones(Fallback, Fallback, Fallback)
+    /** No artwork: the default seed's family. */
+    val Neutral = ArtworkTones(Fallback, Fallback, Fallback, black = true)
 
     private val cache = mutableStateMapOf<String, ArtworkTones>()
 
-    fun tones(url: String?): ArtworkTones = if (url == null) Neutral else cache[url] ?: Neutral
+    /**
+     * Whether a cover's own colour reaches the screen. Off (the default black and pink), every
+     * cover gives the same pink tones; on, each cover seeds its own.
+     */
+    var followCover by androidx.compose.runtime.mutableStateOf(false)
+
+    fun tones(url: String?): ArtworkTones = if (!followCover || url == null) Neutral else cache[url] ?: Neutral
 
     fun accent(url: String?): Color = tones(url).accent
+
+    /** The measured tones, whatever the colour choice: what is known about a cover. */
+    internal fun measured(url: String?): ArtworkTones? = url?.let { cache[it] }
 
     /** True once this artwork has been measured, including when it turned out to have no colour. */
     fun known(url: String): Boolean = cache.containsKey(url)
@@ -213,3 +232,9 @@ object ArtworkPalette {
         cache.clear()
     }
 }
+
+/**
+ * The tones of the song that is playing, for the few marks outside a screen's own wash that take
+ * its colour: the wordmark's overspray and the marker under a page title. Neutral when nothing is.
+ */
+val LocalPlayingTones = androidx.compose.runtime.compositionLocalOf { ArtworkPalette.Neutral }

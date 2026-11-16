@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import app.valen.ui.artwork.LocalPlayingTones
 import app.valen.ui.theme.Layout
 import app.valen.ui.theme.LocalChrome
 import app.valen.ui.theme.Space
@@ -74,13 +75,14 @@ fun PageTitle(
             leading()
             Spacer(Modifier.padding(end = Space.step1))
         }
-        Text(
-            text = title,
-            style = if (compact) MaterialTheme.typography.displaySmall else MaterialTheme.typography.displayMedium,
-            color = ValenColors.Text,
-            maxLines = 1,
-            modifier = Modifier.weight(1f),
-        )
+        Box(modifier = Modifier.weight(1f)) {
+            KineticText(
+                text = title,
+                style = if (compact) MaterialTheme.typography.displaySmall else MaterialTheme.typography.displayMedium,
+                color = ValenColors.Text,
+                underline = LocalPlayingTones.current.bright,
+            )
+        }
         trailing?.invoke()
     }
 }

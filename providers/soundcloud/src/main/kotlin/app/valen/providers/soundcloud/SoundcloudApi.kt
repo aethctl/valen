@@ -46,6 +46,7 @@ internal object SoundcloudApi {
                     artworkUrl = artwork(o.str("artwork")),
                     durationMs = (o.long("duration") ?: 0L).coerceAtLeast(0L),
                     uri = id,
+                    link = o.str("permalink"),
                 )
             }
             .take(limit.coerceAtLeast(0))

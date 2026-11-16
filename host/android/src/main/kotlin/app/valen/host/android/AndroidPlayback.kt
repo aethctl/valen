@@ -38,6 +38,10 @@ object AndroidPlayback {
     @Volatile
     internal var current: PlayerSnapshot? = null
 
+    /** How many seconds of song pass per second (the effects' speed): the lock screen's clock runs at it. */
+    @Volatile
+    var rate: Float = 1f
+
     @Volatile
     internal var queue: List<Track> = emptyList()
 
@@ -69,7 +73,8 @@ object AndroidPlayback {
         _playing.value = true
         val svc = service
         if (svc != null) svc.publish()
-        else if (snapshot.isPlaying) start(context)
+        // A song starting counts: its sound is moments away, and the service must already be up.
+        else if (snapshot.isPlaying || snapshot.isBuffering) start(context)
     }
 
     /** Pushes the app-owned queue and the row now playing (-1: none). */
