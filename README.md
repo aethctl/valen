@@ -58,5 +58,3 @@ Valen is GPL-3.0. It stands on other people's work, and says so in [`NOTICE`](NO
 - **[Astra](https://github.com/Boof2015/astra)** — the parametric EQ filter model, presets and AutoEQ parsing (GPL-3.0).
 
 Valen is not affiliated with Spotify AB, Google/YouTube or SoundCloud.
-
-![the valen tag and a marker line](docs/readme/footer.svg)
