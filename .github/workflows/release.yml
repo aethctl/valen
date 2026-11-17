@@ -91,7 +91,8 @@ jobs:
           LYPRIO_BASE_URL: ${{ secrets.LYPRIO_BASE_URL }}
           LYPRIO_HMAC_KEY: ${{ secrets.LYPRIO_HMAC_KEY }}
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq fakeroot > /dev/null
+          # fakeroot for the .deb; desktop-file-utils because appimagetool validates the entry.
+          sudo apt-get update -qq && sudo apt-get install -y -qq fakeroot desktop-file-utils > /dev/null
           ./gradlew --no-daemon -Pvalen.version="$VERSION" \
             :core:jvmTest :libs:update:test \
             :app-android:assembleRelease :app-desktop:packageAppImage :app-desktop:packageDeb
