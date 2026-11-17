@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 {
-  description = "Valen desktop AppImage with session recovery and Linux runtime dependencies";
+  description = "Valen desktop AppImage with its Linux runtime dependencies";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs = { nixpkgs, ... }:
     let
-      # Upstream ALPHA-1 only provides an x86_64 AppImage (including its JVM).
+      # Releases provide an x86_64 AppImage (including its JVM). Bump version and hash for a new
+      # release; the hash is the release manifest's linux-appimage sha256 (valen-release.json).
       system = "x86_64-linux";
       pkgs = import nixpkgs {
         inherit system;
@@ -15,23 +16,13 @@
         config.allowUnfreePredicate = pkg: nixpkgs.lib.getName pkg == "google-chrome";
       };
       pname = "valen";
-      version = "1.0.0-alpha.1-session-recovery.1";
+      version = "1.0.0-alpha.3";
       src = pkgs.fetchurl {
-        url = "https://github.com/dodo986/valen/releases/download/ALPHA-1/Valen-1.0.0-x86_64.AppImage";
-        hash = "sha256-zWnEZLTCAMDiWhMHMizjhfie/+6t1Xb4a/rUIlINOMw=";
+        url = "https://github.com/dodo986/valen/releases/download/v${version}/Valen-${version}-x86_64.AppImage";
+        hash = "sha256-SvJZX04/k5Oy0azGHbeamigG2yLXrEq5/u0ohW6EhjA=";
       };
-      releaseContents = pkgs.appimageTools.extract {
-        inherit pname src;
-        version = "1.0.0-alpha.3";
-      };
-      contents = pkgs.callPackage ./nix/session-recovery.nix {
-        inherit version;
-        appimageContents = releaseContents;
-        hostSources = ./host/desktop/src/main/kotlin;
-        spotifySources = ./libs/spotify/src/main/kotlin/app/myspoti/spotify/bridge;
-        providersSource = ./app-desktop/src/main/kotlin/app/valen/desktop/Providers.kt;
-      };
-      valen = (pkgs.appimageTools.wrapType2 {
+      contents = pkgs.appimageTools.extract { inherit pname version src; };
+      valen = pkgs.appimageTools.wrapType2 {
         inherit pname version src;
 
         # appimageTools already supplies GTK, NSS, libsecret, X11/Wayland,
@@ -58,10 +49,8 @@
             --replace-fail 'Exec=Valen' "Exec=$out/bin/valen" \
             --replace-fail 'Categories=AudioVideo' 'Categories=AudioVideo;Audio;Player;'
           install -Dm644 ${contents}/valen.png $out/share/icons/hicolor/512x512/apps/valen.png
-          install -Dm644 ${contents}/valen-package-version $out/share/valen/package-version
+          install -Dm644 /dev/stdin $out/share/valen/package-version <<< "${version}"
         '';
-
-        passthru.sessionRecoveryContents = contents;
 
         meta = {
           description = "Music player for Spotify, YouTube Music and SoundCloud";
@@ -70,11 +59,7 @@
           platforms = [ system ];
           mainProgram = "valen";
         };
-      }).overrideAttrs (_: {
-        # wrapType2's runner must use the patched contents, not a fresh extraction
-        # of ALPHA-1. Updating the flake input now rebuilds the correction too.
-        inherit contents;
-      });
+      };
     in {
       packages.${system}.default = valen;
       apps.${system}.default = {

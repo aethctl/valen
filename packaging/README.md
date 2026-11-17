@@ -70,20 +70,20 @@ cat result/share/valen/package-version
 nix run "path:$PWD"
 ```
 
-Close any older Valen instance before testing. The package version is
-`1.0.0-alpha.1-session-recovery.1`. A visible Chrome window is expected during sign-in; closing
-it should recover the connection headlessly, retaining the private profile's session cookies.
-These commands do not install or replace a system package. `path:` includes the untracked flake
-files without staging them in Git.
+Close any older Valen instance before testing. The package version is the release it wraps
+(`1.0.0-alpha.3`). A visible Chrome window is expected during sign-in; closing it should recover
+the connection headlessly, retaining the private profile's session cookies. These commands do not
+install or replace a system package. `path:` includes the untracked flake files without staging
+them in Git.
 
-The official ALPHA-1 AppImage predates the fix. `nix/session-recovery.nix` compiles the desktop
-host and `Providers.kt` against that pinned release's dependencies and replaces the corresponding
-classes in its extracted contents. The official JVM, launcher, UI, desktop entry and icon are
-retained. This build needs neither Gradle nor `.tools/` or local `build/` output; it is not a full
-source build. The overlay is tied to ALPHA-1 and Kotlin 2.4.21 and should be removed when a pinned
-upstream release contains the fix. Only x86_64-linux is provided because that is the architecture
-of the official AppImage. Chrome (including Widevine) is an unfree runtime dependency, allowed
-only in this flake's package set.
+The flake wraps the official release AppImage as it is (its JVM, launcher, UI, desktop entry and
+icon) and adds the runtime pieces it does not bundle: Nixpkgs Chrome for Spotify, FFmpeg and CA
+certificates. Releases since 1.0.0-alpha.2 include desktop session recovery, so the overlay that
+patched ALPHA-1 is gone. For a new release, change `version` in `flake.nix` and set `hash` to the
+release manifest's `linux-appimage` sha256 (in SRI form). Valen's own updater does not replace a
+Nix copy; it only says a new release is out. Only x86_64-linux is provided because that is the
+architecture of the official AppImage. Chrome (including Widevine) is an unfree runtime dependency,
+allowed only in this flake's package set.
 
 For a NixOS configuration, add this repository as an input named `valen` and include
 `inputs.valen.packages.${pkgs.stdenv.hostPlatform.system}.default` in `environment.systemPackages`.
