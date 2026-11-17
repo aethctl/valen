@@ -15,6 +15,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
+import kotlin.math.roundToLong
 
 /**
  * The desktop's audio output: `ffplay` (from FFmpeg), one process per stream.
@@ -75,6 +77,14 @@ class FfplayPlayer(
     @Volatile private var lastClock = Double.NaN
     @Volatile private var movedAtNanos = 0L
     @Volatile private var openedAtNanos = 0L
+    /**
+     * The stream's own start time (seconds; its "start:" in ffplay's description, 1.4 for an MPEG-TS),
+     * which its clock counts from, and how its clock is scaled at the start ([FfmpegEffects.clockScale]:
+     * a turntable's resample rescales the timestamps). Together they say where sound really began.
+     */
+    @Volatile private var streamStartSec = Double.NaN
+    @Volatile private var clockScale = 1.0
+
     /** Clock readings to let pass before anchoring again (the first after a resume can jump). */
     @Volatile private var skipReadings = 0
 
@@ -278,7 +288,7 @@ class FfplayPlayer(
         val command = ArrayList<String>(16)
         command += bin
         command += listOf(
-            "-hide_banner", "-loglevel", "error", "-stats", "-nodisp", "-autoexit",
+            "-hide_banner", "-loglevel", "level+info", "-stats", "-nodisp", "-autoexit",
             "-volume", (volume * 100).toInt().coerceIn(0, 100).toString(),
         )
         if (atMs > 0) command += listOf("-ss", String.format(java.util.Locale.ROOT, "%.3f", atMs / 1000.0))
@@ -290,6 +300,7 @@ class FfplayPlayer(
         synchronized(diagnostics) { diagnostics.setLength(0) }
         resetClock()
         processRate = rate
+        clockScale = FfmpegEffects.clockScale(filter)
         anchorMs = atMs
         val proc = ProcessBuilder(command)
             .redirectErrorStream(true)
@@ -299,17 +310,25 @@ class FfplayPlayer(
         // refuses: the last lines are kept for the UI.
         reader = scope.launch(Dispatchers.IO) {
             runCatching {
-                proc.inputStream.bufferedReader().forEachLine { line ->
+                proc.inputStream.bufferedReader().forEachLine { raw ->
+                    if (raw.isBlank()) return@forEachLine
+                    // Lines are tagged with their level ("[info] …"): info is the stream's
+                    // description and the clock, never something to show a person.
+                    val (level, line) = splitLevel(raw)
                     if (line.isBlank()) return@forEachLine
                     val clock = STATUS.find(line)
                     if (clock != null) {
                         reading(proc, clock.groupValues[1].toDoubleOrNull(), QUEUE.find(line)?.groupValues?.get(1)?.toIntOrNull())
                         // An error printed straight after a status line shares its line.
-                        val said = TAIL.find(line)?.groupValues?.get(1)?.trim().orEmpty()
+                        val said = TAIL.find(line)?.groupValues?.get(1)?.let { splitLevel(it).second }?.trim().orEmpty()
                         if (said.isNotEmpty()) synchronized(diagnostics) { diagnostics.append(said).append('\n') }
                         return@forEachLine
                     }
                     if (line.contains("M-A:") || line.contains("A-V:")) return@forEachLine
+                    if (level == "info" || level == "verbose" || level == "debug") {
+                        streamStartOf(line)?.let { if (process === proc || process == null) streamStartSec = it }
+                        return@forEachLine
+                    }
                     synchronized(diagnostics) {
                         diagnostics.append(line).append('\n')
                         if (diagnostics.length > 2000) diagnostics.delete(0, diagnostics.length - 2000)
@@ -457,6 +476,7 @@ class FfplayPlayer(
         clockAnchor = Double.NaN
         lastClock = Double.NaN
         skipReadings = 0
+        streamStartSec = Double.NaN
         starvedAtNanos = 0L
         starvedClock = Double.NaN
         openedAtNanos = System.nanoTime()
@@ -477,6 +497,10 @@ class FfplayPlayer(
         }
         val now = System.nanoTime()
         if (clockAnchor.isNaN()) {
+            // ffplay's -ss lands on the nearest seek point, not the time asked for: a YouTube
+            // WebM asked for 37.3 s began at 34.98 s, and every word of the lyrics was shown 2.3 s
+            // early until the next seek. Its clock says where the song really is.
+            soundedAt(clock, streamStartSec, clockScale, anchorMs)?.let { anchorMs = it }
             clockAnchor = clock
             lastClock = clock
             movedAtNanos = now
@@ -517,6 +541,33 @@ class FfplayPlayer(
     }
 
     companion object {
+        /**
+         * Where in the song sound began, from ffplay's first clock reading: the clock times its
+         * [scale], less the stream's own [startSec]. Null when the start is unknown (an ffplay that
+         * did not describe the stream), or when the answer is far from where the stream was [askedMs]
+         * to begin (a stream whose timestamps say nothing useful): then the request stands.
+         */
+        internal fun soundedAt(clock: Double, startSec: Double, scale: Double, askedMs: Long): Long? {
+            if (startSec.isNaN() || clock.isNaN()) return null
+            val at = ((clock * scale - startSec) * 1000.0).roundToLong()
+            return at.takeIf { it >= 0 && abs(it - askedMs) <= MAX_START_SLIP_MS }
+        }
+
+        /** A seek point is a few seconds before the time asked for at most; further is not a seek point. */
+        private const val MAX_START_SLIP_MS = 20_000L
+
+        /** The level tag of a line written with `-loglevel level+…`, and the line without it. */
+        internal fun splitLevel(line: String): Pair<String?, String> {
+            val m = LEVEL.find(line) ?: return null to line
+            return m.groupValues[1] to line.substring(m.range.last + 1)
+        }
+
+        /** The stream's start time from ffplay's description ("Duration: 00:02:59.93, start: 1.400000, …"). */
+        internal fun streamStartOf(line: String): Double? = START.find(line)?.groupValues?.get(1)?.toDoubleOrNull()
+
+        private val LEVEL = Regex("^\\[(quiet|panic|fatal|error|warning|info|verbose|debug|trace)\\] ?")
+        private val START = Regex("Duration:.*?start:\\s*(-?\\d+(?:\\.\\d+)?)")
+
         /** How long effects must stay put before a playing stream is restarted with them. */
         private const val RESTART_SETTLE_MS = 220L
         private const val EARLY_END_MARGIN_MS = 3_000L

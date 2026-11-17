@@ -16,7 +16,8 @@ plumbing of Orpheon (formerly Myspoti), by kota-zo and contributors:
 - `host/desktop` — `CdpHost` / `CdpPageHost` (Chrome DevTools Protocol) (`base/host-cdp`).
 - `host/android` — WebView hosts and the media-session/notification playback service (`base/host-android`).
   `SpotifyRelay` is a condensed port of Orpheon's `ControlRelay` (Spotify Connect requests sent from
-  the app, without the WebView's `X-Requested-With`), whose finding it relies on.
+  the app, without the WebView's `X-Requested-With`), whose finding it relies on. `BrowserIdentity` is a
+  trimmed port of Orpheon's `Fingerprint` (user agent and client hints that agree).
 
 Every source file carries its SPDX header. Orpheon's authors require credit, retention of notices, and
 that derivative works are published under GPL-3.0 with complete source. Valen complies.

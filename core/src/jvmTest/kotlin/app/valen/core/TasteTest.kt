@@ -66,4 +66,83 @@ class TasteTest {
         mixer.build(SmartSpec(sources = setOf(SmartSource.SpotifyFollows, SmartSource.Genres), genres = listOf("lo-fi")), Taste(ListeningLog(), emptyList(), emptyList()))
         assertEquals(listOf("Followed", "lo-fi"), asked)
     }
+
+    // The "completely random songs": a name that only contains the seed, someone else's upload,
+    // and derivatives of the real song.
+    @Test
+    fun `an artist seed takes only songs that credit that artist, and never derivatives`() = runBlocking {
+        val taste = Taste(ListeningLog(), listOf("Sia", "Drake"), emptyList())
+        val found = listOf(
+            t("Chandelier", "Sia"),
+            t("Elastic Heart", "Sia - Topic"),
+            t("Together", "Labrinth, Sia"),
+            t("Once Upon a December", "Anastasia"),
+            t("Found a Way", "Drake Bell"),
+            t("God's Plan", "Drake"),
+            t("God's Plan (Nightcore)", "Drake"),
+            t("Chandelier - slowed + reverb", "Sia"),
+            t("God's Plan (Piano Cover)", "Drake"),
+            Track(ProviderId.SPOTIFY, "clip", "Hotline Bling snippet", "Drake", durationMs = 20_000),
+        )
+        val mixer = SmartMixer(search = { found }, random = Random(3))
+        val mix = mixer.build(SmartSpec(sources = setOf(SmartSource.Favourites), size = 20, discovery = 0.5f), taste)
+        assertEquals(setOf("Chandelier", "Elastic Heart", "Together", "God's Plan"), mix.map { it.title }.toSet())
+    }
+
+    @Test
+    fun `a song heard on one service is heard on all, and a derivative once heard is the person's own`() {
+        val heardHere = Track(ProviderId.SOUNDCLOUD, "sc", "Awake", "Tycho")
+        val taste = Taste(log, emptyList(), emptyList())
+        assertTrue(taste.heard(heardHere), "the SoundCloud copy of a song heard on Spotify")
+        val loop = t("Awake (1 hour loop)", "Tycho", id = "loop")
+        assertTrue(SmartMixer.derivative(loop, taste))
+        val looped = Taste(log.copy(songs = log.songs + (loop.key to Listened(loop.title, "Tycho", provider = ProviderId.SPOTIFY, ms = 60_000, plays = 2))), emptyList(), emptyList())
+        assertTrue(!SmartMixer.derivative(loop, looped))
+    }
+
+    @Test
+    fun `recent listening leads, and an artist skipped away from is left out`() {
+        val old = Listened("Old song", "Old Band", provider = ProviderId.SPOTIFY, ms = 900_000, plays = 20)
+        val new = Listened("New song", "New Band", provider = ProviderId.SPOTIFY, ms = 300_000, plays = 8)
+        val skipped = Listened("Meh", "Skipped Band", provider = ProviderId.SPOTIFY, ms = 20_000, plays = 4)
+        val listening = ListeningLog(
+            totalMs = 1_220_000,
+            songs = mapOf("SPOTIFY:old" to old, "SPOTIFY:new" to new, "SPOTIFY:meh" to skipped),
+            artists = mapOf("Old Band" to 900_000L, "New Band" to 300_000L, "Skipped Band" to 20_000L),
+            skips = mapOf("SPOTIFY:meh" to 4),
+            // Old Band was all of two months ago; New Band is this week.
+            daily = mapOf(
+                "20000" to DayListening(ms = 900_000, songs = mapOf("SPOTIFY:old" to 900_000L)),
+                "20060" to DayListening(ms = 300_000, songs = mapOf("SPOTIFY:new" to 300_000L)),
+            ),
+        )
+        val taste = Taste(listening, emptyList(), emptyList())
+        assertEquals(listOf("New Band", "Old Band"), taste.topArtists(3))
+        assertTrue(taste.dislikes("Skipped Band"))
+        assertTrue(!taste.dislikes("New Band"))
+    }
+
+    @Test
+    fun `new artists come from the related ones, and a stranger's song is not lifted over them`() = runBlocking {
+        val taste = Taste(log, listOf("Tycho"), emptyList())
+        val songs = mapOf(
+            "Tycho" to listOf(t("Dive", "Tycho"), t("A Walk", "Tycho")),
+            "Bonobo" to listOf(t("Kerala", "Bonobo")),
+            "chill" to listOf(t("Random Upload", "Somebody")),
+        )
+        val asked = mutableListOf<String>()
+        val mixer = SmartMixer(
+            search = { q -> asked += q; songs[q].orEmpty() },
+            related = { name -> if (name == "Tycho") listOf("Tycho", "Bonobo") else emptyList() },
+            random = Random(4),
+        )
+        val mix = mixer.build(
+            SmartSpec(sources = setOf(SmartSource.Favourites, SmartSource.Genres), genres = listOf("chill"), size = 10, discovery = 0.8f),
+            taste,
+        )
+        assertEquals(listOf("Tycho", "Bonobo", "chill"), asked, "the seed, a related artist, then the genre")
+        assertTrue(mix.any { it.artist == "Bonobo" }, "a related artist's song is offered")
+        assertTrue(mix.indexOfFirst { it.artist == "Bonobo" } < mix.indexOfFirst { it.artist == "Somebody" } ||
+            mix.none { it.artist == "Somebody" }, "the related artist ranks above a stranger: $mix")
+    }
 }

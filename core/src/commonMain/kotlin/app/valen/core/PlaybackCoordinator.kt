@@ -385,10 +385,15 @@ class PlaybackCoordinator(
     /** The taste as it stands now: what was said, and what was played and skipped. */
     fun taste(): Taste = Taste(stats.log.value, _settings.value.favouriteArtists, _settings.value.favouriteSongs)
 
-    /** Builds song lists from the taste, searching every service and the Spotify follows. */
+    /**
+     * Builds song lists from the taste, searching every service and the Spotify follows; new artists
+     * come from the ones the artist pages call related (kept pages first, so a page already seen
+     * costs nothing).
+     */
     fun mixer(): SmartMixer = SmartMixer(
         search = { query -> unifiedSearch(query).tracks },
         follows = { (byId[ProviderId.SPOTIFY] as? ArtistFollows)?.followedArtists().orEmpty() },
+        related = { name -> (artists.kept(name) ?: runCatching { artists.open(name) }.getOrNull())?.related.orEmpty().map { it.name } },
     )
 
     /** Black and pink (false), or the colour of the cover that is playing (true). */
@@ -421,6 +426,8 @@ class PlaybackCoordinator(
      * chosen song plays first and the rest of the list follows in a shuffled order.
      */
     suspend fun play(track: Track, context: List<Track> = listOf(track), from: String? = null) {
+        // A new queue is no radio: it is not refilled behind the person's back.
+        radioFrom = null
         // A song whose service cannot play now (a signed-out Spotify) plays from a service that
         // can, when one has the same recording; otherwise the reason is said and the queue is left
         // as it was. Replacing the queue first left the old song on the stage with the tapped one
@@ -695,6 +702,7 @@ class PlaybackCoordinator(
      * this device needs neither.
      */
     private fun prepareNext(gen: Long) {
+        refillRadio()
         val list = _queue.value
         if (list.isEmpty()) return
         val at = _index.value
@@ -1146,7 +1154,8 @@ class PlaybackCoordinator(
      */
     suspend fun startRadio(track: Track) {
         play(track, listOf(track))
-        val spec = SmartSpec(sources = setOf(SmartSource.Artists), artists = listOf(track.artist), size = 50, discovery = 0.6f)
+        // The artist and, through their related artists, others like them: a radio, not a discography.
+        val spec = SmartSpec(sources = setOf(SmartSource.Artists), artists = artistsIn(track.artist), size = 50, discovery = 0.6f)
         val found = runCatching { mixer().build(spec, taste()) }.getOrDefault(emptyList())
         val own = recordingKey(track.title, track.artist)
         val rest = found.filter { recordingKey(it.title, it.artist) != own && it.key != track.key }
@@ -1166,10 +1175,46 @@ class PlaybackCoordinator(
                 _queue.value = radio
             }
             _index.value = 0
+            radioFrom = track.key
             saveSession()
         }
         prepareNext(startGen)
         confirm("Radio from ${track.artist}")
+    }
+
+    /** The song a radio began with, while its queue stands: the queue is refilled before it runs out. */
+    @Volatile private var radioFrom: String? = null
+    private var radioJob: Job? = null
+
+    /**
+     * A radio near its end gets more: songs like the last ones played (their artists and those
+     * related to them), none already in the queue. Only while the queue is still the radio's.
+     */
+    private fun refillRadio() {
+        val origin = radioFrom ?: return
+        val list = _queue.value
+        if (list.firstOrNull()?.key != origin) {
+            radioFrom = null
+            return
+        }
+        if (list.size - 1 - _index.value > RADIO_REFILL_LEFT || radioJob?.isActive == true) return
+        val recent = list.takeLast(RADIO_SEED_SONGS).flatMap { artistsIn(it.artist) }.distinctBy(Taste::artistKey)
+        radioJob = scope.launch {
+            val spec = SmartSpec(sources = setOf(SmartSource.Artists), artists = recent, size = RADIO_REFILL_SONGS, discovery = 0.7f)
+            val found = runCatching { mixer().build(spec, taste()) }.getOrDefault(emptyList())
+            val added = synchronized(queueLock) {
+                val now = _queue.value
+                if (radioFrom != origin || now.firstOrNull()?.key != origin) return@launch
+                val have = now.map { recordingKey(it.title, it.artist) }.toSet()
+                val more = found.filter { recordingKey(it.title, it.artist) !in have }
+                if (more.isEmpty()) return@launch
+                _queue.value = now + more
+                unshuffled = unshuffled?.let { it + more }
+                saveSession()
+                more.size
+            }
+            if (added > 0) prepareNext(startGen)
+        }
     }
 
     fun enqueue(track: Track) {
@@ -1254,6 +1299,12 @@ class PlaybackCoordinator(
         listOf(current) + list.filter { it.key != current.key }.shuffled()
 
     private companion object {
+        /** A radio is refilled when this few songs are left after the playing one. */
+        const val RADIO_REFILL_LEFT = 3
+        /** The last songs whose artists seed a refill, and how many songs it brings. */
+        const val RADIO_SEED_SONGS = 5
+        const val RADIO_REFILL_SONGS = 25
+
         /** How often the place in a playing song is written down. */
         const val SESSION_SAVE_MS = 10_000L
 
