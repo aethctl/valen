@@ -113,4 +113,24 @@ class LyricsBookTest {
         val never = Source("a") { error("not asked") }
         assertEquals(LyricsState.Found(words), LyricsBook(listOf(never), store).lyricsFor(song))
     }
+
+    // A music video's intro moves every line: its words are not the album version's, though the
+    // name is the same recording once "(Official Video)" is dropped.
+    @Test
+    fun `a version of another length is looked up for itself`() = runTest {
+        val album = song
+        val sameAudio = Track(ProviderId.YOUTUBE_MUSIC, "v", "Paper Moons", "The Walls", durationMs = 181_200)
+        val video = Track(ProviderId.YOUTUBE_MUSIC, "w", "Paper Moons (Official Video)", "The Walls", durationMs = 214_000)
+        val asked = mutableListOf<Long?>()
+        val source = Source("a") { q -> asked += q.durationMs; words.copy(source = "for ${q.durationMs}") }
+        val store = MemoryStore()
+        val book = LyricsBook(listOf(source), store)
+        book.lyricsFor(album)
+        book.lyricsFor(sameAudio)
+        val forVideo = book.lyricsFor(video)
+        assertEquals(listOf<Long?>(180_000, 214_000), asked)
+        assertEquals("for 214000", ((forVideo as LyricsState.Found).lyrics.source))
+        // Across runs too: the video's words come from the store under its own length.
+        assertEquals(forVideo, LyricsBook(listOf(Source("b") { error("not asked") }), store).lyricsFor(video))
+    }
 }

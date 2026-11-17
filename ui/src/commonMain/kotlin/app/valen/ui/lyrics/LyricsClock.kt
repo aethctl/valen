@@ -30,7 +30,10 @@ import kotlin.time.TimeSource
 internal fun rememberLyricsClock(coordinator: PlaybackCoordinator, playing: Boolean, smooth: Boolean): LongState {
     val reduced = LocalReducedMotion.current
     val sound by coordinator.sound.collectAsState()
-    val rate = if (sound.on) sound.speed else 1f
+    val active by coordinator.active.collectAsState()
+    // The speed the song really plays at: the effects' only on a service that applies them (Spotify
+    // plays at 1× whatever the notebook says, and carrying its words at 1.25× ran them ahead).
+    val rate = remember(sound, active) { coordinator.currentRate() }
     val clock = remember(coordinator) { mutableLongStateOf(coordinator.snapshot.value?.positionMs ?: 0L) }
     val frames = smooth && playing && !reduced
     LaunchedEffect(coordinator, playing, frames, rate) {

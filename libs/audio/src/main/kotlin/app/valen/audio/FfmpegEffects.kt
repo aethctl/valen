@@ -92,6 +92,17 @@ object FfmpegEffects {
     fun rate(effects: SoundEffects): Double = effects.effective().speed.toDouble()
 
     /**
+     * How [graph] scales the stream's timestamps: each `asetrate` after the graph's resample to
+     * [RATE] stretches them by its rate over [RATE] (a turntable at 1.25× reads 27.96 s where the
+     * song is at 34.95 s); tempo filters (atempo, rubberband) keep them. ffplay's clock starts from
+     * those timestamps, so this is what turns its first reading back into the song's time.
+     */
+    fun clockScale(graph: String?): Double =
+        ASETRATE.findAll(graph ?: return 1.0).fold(1.0) { k, m -> k * (m.groupValues[1].toDouble() / RATE) }
+
+    private val ASETRATE = Regex("asetrate=(\\d+)")
+
+    /**
      * Speed and pitch. A turntable resamples (pitch and speed together, exact); otherwise
      * rubberband keeps them apart at its best quality, and without it a resample for the pitch is
      * evened back to the right speed with atempo.

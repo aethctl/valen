@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -628,6 +629,38 @@ class PlaybackCoordinatorTest {
         assertEquals(0, coordinator.index.value)
         assertEquals(6, coordinator.queue.value.size)
         assertEquals(radioSongs.map { it.key }.toSet(), coordinator.queue.value.drop(1).map { it.key }.toSet())
+    }
+
+    @Test
+    fun `a radio near its end is refilled with new songs, and a new queue is never refilled`() = runTest {
+        var batch = 0
+        val spotify = object : MusicProvider by FakeProvider(ProviderId.SPOTIFY) {
+            val inner = FakeProvider(ProviderId.SPOTIFY)
+            override val player = inner.player
+            override suspend fun play(track: Track, startMs: Long) = inner.play(track, startMs)
+            // Every search finds five songs not seen before, all by the radio's artist.
+            override suspend fun search(query: String, limit: Int): List<Track> {
+                val b = ++batch
+                return (1..5).map { Track(ProviderId.SPOTIFY, "b$b-$it", "Batch $b song $it", "Artist", durationMs = 180_000) }
+            }
+        }
+        val coordinator = PlaybackCoordinator(listOf(spotify), backgroundScope, settings())
+        val seed = track(ProviderId.SPOTIFY, "seed", "Seed song").copy(artist = "Artist")
+        coordinator.startRadio(seed)
+        runCurrent()
+        val first = coordinator.queue.value.size
+        assertEquals(6, first)
+        // Two songs on, three are left after the playing one: the radio gets more.
+        repeat(2) { coordinator.next(); runCurrent() }
+        assertTrue(coordinator.queue.value.size > first, "refilled: ${coordinator.queue.value.size}")
+        assertEquals(seed, coordinator.queue.value.first())
+        assertEquals(coordinator.queue.value.size, coordinator.queue.value.distinctBy { recordingKey(it.title, it.artist) }.size, "no song twice")
+
+        // Something else is played: that queue is the person's, and stays as it is.
+        val mine = listOf(track(ProviderId.SPOTIFY, "x"), track(ProviderId.SPOTIFY, "y"))
+        coordinator.play(mine.first(), mine)
+        repeat(1) { coordinator.next(); runCurrent() }
+        assertEquals(mine, coordinator.queue.value)
     }
 
     @Test

@@ -59,19 +59,24 @@ import kotlinx.coroutines.launch
 
 /**
  * What Home shows from the taste, kept above the screens so leaving Home and coming back does not
- * search again. Made again when what it was made from changes, or after [StaleMs].
+ * search again. Made again when what it was made from changes, after [RemakeAfterPlays] more songs
+ * were played, or after [StaleMs].
  */
 @Stable
 class HomeFeed {
     var forYou by mutableStateOf<List<Track>>(emptyList())
     internal var madeFrom: Any? = null
     internal var madeAt = 0L
+    internal var madeAtPlays = 0
     var loading by mutableStateOf(false)
 }
 
 val LocalHomeFeed = staticCompositionLocalOf { HomeFeed() }
 
 private const val StaleMs = 30 * 60_000L
+
+/** Songs played after which "For you" is made again, to follow what is being played now. */
+private const val RemakeAfterPlays = 5
 
 /**
  * Home's part that learns: songs picked for this person, the artists they love most (each a
@@ -89,9 +94,11 @@ fun TasteSections(coordinator: PlaybackCoordinator, startIndex: Int) {
     val taste = remember(log.plays, log.songs.size, log.skips, settings.favouriteArtists, settings.favouriteSongs) { coordinator.taste() }
     val seed = settings.favouriteArtists to settings.favouriteSongs.map { it.key }
 
-    LaunchedEffect(seed, log.plays / 10) {
+    // Made again every few songs (and when the favourites change), so it follows what is played now.
+    LaunchedEffect(seed, log.plays / RemakeAfterPlays) {
         val now = System.currentTimeMillis()
-        if (feed.madeFrom == seed && now - feed.madeAt < StaleMs && feed.forYou.isNotEmpty()) return@LaunchedEffect
+        val fresh = now - feed.madeAt < StaleMs && log.plays - feed.madeAtPlays < RemakeAfterPlays
+        if (feed.madeFrom == seed && fresh && feed.forYou.isNotEmpty()) return@LaunchedEffect
         if (taste.topArtists(1).isEmpty()) return@LaunchedEffect
         feed.loading = true
         val made = runCatching {
@@ -105,6 +112,7 @@ fun TasteSections(coordinator: PlaybackCoordinator, startIndex: Int) {
             feed.forYou = made
             feed.madeFrom = seed
             feed.madeAt = now
+            feed.madeAtPlays = log.plays
         }
     }
 

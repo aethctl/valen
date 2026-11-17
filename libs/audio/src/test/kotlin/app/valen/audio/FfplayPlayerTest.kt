@@ -257,6 +257,64 @@ class FfplayPlayerTest {
         writer.interrupt()
     }
 
+    /** A tone in [container] whose seek points are [clusterMs] apart (WebM's clusters, as YouTube's are). */
+    private fun coarse(container: String, clusterMs: Int = 5_000, seconds: Int = 120): ResolvedStream {
+        val file = dir.resolve("coarse-$seconds.$container")
+        if (!Files.exists(file)) {
+            val codec = if (container == "webm") listOf("-c:a", "libopus", "-b:a", "64k", "-cluster_time_limit", "$clusterMs")
+            else listOf("-c:a", "aac", "-b:a", "128k", "-f", "mpegts")
+            val p = ProcessBuilder(listOf(ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=$seconds") + codec + file.toString())
+                .redirectErrorStream(true).start()
+            p.waitFor(60, TimeUnit.SECONDS)
+        }
+        return ResolvedStream(url = file.toString(), durationMs = seconds * 1000L)
+    }
+
+    // ffplay's -ss lands on a seek point. The lyrics follow the position, so it must be where sound
+    // really began (the cluster before 37.3 s), not the time asked for — at any speed, on a turntable,
+    // and in a stream whose clock starts at 1.4 s (MPEG-TS).
+    @Test
+    @Timeout(90)
+    fun `the position is where sound really began, not where it was asked to`() = runBlocking {
+        assumeTrue(ffplay != null && ffmpeg != null)
+        val cases = listOf(
+            Triple(coarse("webm"), SoundEffects(), 34_700L..35_300L),
+            Triple(coarse("webm"), SoundEffects(speed = 1.25f), 34_700L..35_300L),
+            Triple(coarse("webm"), SoundEffects(speed = 1.25f, vinyl = true), 34_700L..35_300L),
+            Triple(coarse("ts"), SoundEffects(), 36_900L..37_500L),
+        )
+        for ((stream, effects, expected) in cases) {
+            val p = player()
+            p.setEffects(effects)
+            p.play(stream, 37_300)
+            p.awaitSound()
+            // The first reading anchors the position; a moment later it has moved on from there.
+            delay(150)
+            val at = p.state.value.positionMs - (150 * FfmpegEffects.rate(effects)).toLong()
+            assertTrue(at in expected, "${stream.url.substringAfterLast('.')} $effects began at $at, expected $expected")
+            p.stop()
+        }
+    }
+
+    @Test
+    fun `ffplay's tagged lines and its first clock give the song's time`() {
+        assertEquals("info" to "  Duration: 00:02:59.93, start: 1.400000, bitrate: 159 kb/s",
+            FfplayPlayer.splitLevel("[info]   Duration: 00:02:59.93, start: 1.400000, bitrate: 159 kb/s"))
+        assertEquals(null to "plain line", FfplayPlayer.splitLevel("plain line"))
+        assertEquals(1.4, FfplayPlayer.streamStartOf("  Duration: 00:02:59.93, start: 1.400000, bitrate: 159 kb/s"))
+        assertNull(FfplayPlayer.streamStartOf("  Stream #0:0: Audio: opus, 48000 Hz"))
+        // WebM at a cluster, a turntable (timestamps scaled), an MPEG-TS (clock from 1.4 s).
+        assertEquals(34_980L, FfplayPlayer.soundedAt(34.98, 0.0, 1.0, 37_300))
+        assertEquals(34_950L, FfplayPlayer.soundedAt(27.96, 0.0, 1.25, 37_300))
+        assertEquals(37_160L, FfplayPlayer.soundedAt(38.56, 1.4, 1.0, 37_300))
+        // Unknown start, or an answer nowhere near the request: the request stands.
+        assertNull(FfplayPlayer.soundedAt(34.98, Double.NaN, 1.0, 37_300))
+        assertNull(FfplayPlayer.soundedAt(500.0, 0.0, 1.0, 37_300))
+        assertEquals(1.25, FfmpegEffects.clockScale("aresample=48000,asetrate=60000,aresample=48000,volume=1"), 1e-9)
+        assertEquals(1.0, FfmpegEffects.clockScale("aresample=48000,atempo=1.25"), 1e-9)
+        assertEquals(1.0, FfmpegEffects.clockScale(null), 1e-9)
+    }
+
     private fun wavHeader(rate: Int, seconds: Int): ByteArray {
         val data = rate * 2 * 2 * seconds
         return ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {

@@ -281,7 +281,7 @@ Key invariants:
   republishes only what the session's own clock could not predict.
 - **Lyrics are looked up by song, not by service, and Lyprio's key is never in the source.**
   `LyricsBook` (on the coordinator) asks its sources in order (Lyprio when set up, Spotify's own
-  card through `LyricsCatalog`/`ServiceLyrics`, then LRCLIB), keyed by `recordingKey`; a failure is
+  card through `LyricsCatalog`/`ServiceLyrics`, then LRCLIB), keyed by `recordingKey` and the song's length in 4 s steps (`LyricsBook.keyOf`: a music video's intro must never take the album version's timing); a failure is
   `Failed` and never remembered as a miss (a miss is kept 3 days). Spotify is asked only signed in
   and with its Web Player already up: `SpotifyProvider.serviceLyrics` throws `LyricsSkipped` rather
   than wake the page, and the desktop's `RetryingProvider` asks only an adapter already attached
@@ -326,8 +326,12 @@ Key invariants:
   hook (→ `WebPlayerHost.ensureLoaded`), called before it waits for the page (25 s for a search,
   30 s for a play): the adapter checks readiness before it sends anything, so a hook on the first
   bridge command alone never fired and Spotify stayed "still starting" for good. The WebView
-  announces Chrome at its engine's real major version (`WebPlayerHost.DESKTOP_UA`); a fixed
-  `Chrome/133` is the "Unsupported browser" trap the desktop already hit.
+  announces Chrome at its engine's real version (`BrowserIdentity`, used by every WebView host); a fixed
+  `Chrome/133` is the "Unsupported browser" trap the desktop already hit. **The user agent and the client
+  hints must name the same browser**: `BrowserIdentity.applyTo` sets both (brands, grease and order as
+  Chromium derives them, `BrowserIdentityTest`). A UA at the engine's version beside hints frozen at
+  "Chromium 133" broke both sign-ins on a phone (Spotify: "Oops! Something went wrong"; Google: "This
+  browser or app may not be secure").
 - **Android runs at the screen's fastest refresh rate.** `MainActivity.preferFastestRefresh`
   picks the fastest display mode at the current resolution (many makers hold an app at 60 Hz
   unless it asks). Since nothing asks for frames when nothing moves, the rate costs little;
@@ -510,10 +514,20 @@ empty states, purple-blue gradients, emoji icons, placeholder copy, shadows.
 - **Words in the app are short and plain** (see design-spec "Words"). The only emoji is the 🥺
   on the welcome's hello, asked for by the owner.
 - **Taste and mixes live in core** (`core/Taste.kt`): `Taste` scores artists and songs from the
-  welcome's favourites, listening time and early skips (`ListeningLog.skips`, recorded by
-  `PlaybackCoordinator.next()`); `SmartMixer` searches every service from seeds, scores by taste,
-  keeps one copy of a recording, caps an artist at a quarter and spreads artists apart. Home's
-  "For you", artist mixes and smart playlists all go through it; tests in `TasteTest`.
+  welcome's favourites, listening time (recent weeks weigh as much as all before, halving every 14
+  days) and early skips as a *rate* (`ListeningLog.skips`, recorded by `PlaybackCoordinator.next()`);
+  an artist skipped away from (3+ skips, 60 %+ of plays, never named) is left out. Artists are
+  each credited name (`Taste.creditsOf`: `artistsIn`, " - Topic"/VEVO off); a song is heard by
+  recording, from any service. `SmartMixer` searches every service from seeds and takes a song for an
+  artist seed **only when it credits that artist** (a name merely containing the seed — "Drake Bell",
+  "Anastasia" — was the "random songs"); new artists come from the artist pages' related artists
+  (`related`, more with more discovery), never from what a search returned; derivatives (covers,
+  karaoke, nightcore, slowed, 8D, loops, clips under a minute or over 12) are offered only when that
+  very upload was played. It scores by taste, an artist's best-known songs first, keeps one copy of a
+  recording, caps an artist at a quarter and spreads artists apart. Home's "For you" (made again
+  every 5 songs), artist mixes, a radio and smart playlists all go through it. A radio is refilled
+  from its last songs' artists when 3 songs are left, only while the queue is still the radio's
+  (`radioFrom`; `play()` ends it). Tests in `TasteTest` and `PlaybackCoordinatorTest`.
 - **Street marks** (`components/Street.kt`) are paint on the wall, never on chrome and never on
   text a person reads to use the app: the tag, the marker under a page title, the swipe behind the
   playing row, tape on a lone cover. Do not add a graffiti font; the tag is the owner's drawing.
@@ -612,6 +626,14 @@ These cost hours before; do not relearn them.
   clock keeps running over silence when the stream starves, so a stall is `aq=0KB` held for
   `stallAfterMs`, not a still clock. Every public op goes through one mutex (an effects restart that
   raced a seek left two ffplay processes).
+- **ffplay's `-ss` is not exact, so the position is taken from its clock.** It lands on the nearest
+  seek point: a YouTube WebM asked for 37.3 s began at 34.98 s, so after every seek, sound change
+  (each one restarts ffplay where it was) or recovery the lyrics ran seconds early. `FfplayPlayer`
+  runs ffplay with `-loglevel level+info`, reads the stream's `start:` from its description (an
+  MPEG-TS clock starts at 1.4 s), and anchors the position at `clock × FfmpegEffects.clockScale −
+  start` (a turntable's `asetrate` scales the timestamps; atempo and rubberband keep them). Info
+  lines never reach the error text shown to a person. `FfplayPlayerTest` pins WebM, a 1.25× tempo,
+  a turntable and MPEG-TS against where sound really began.
 - **Compose resources in an Android library need `androidResources { enable = true }`** in `ui`'s
   `android { }` block (AGP's KMP library plugin). Without it the APK has no fonts or drawables and
   the welcome screen crashed with `MissingResourceException` on its first image.

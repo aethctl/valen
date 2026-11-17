@@ -88,6 +88,9 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
 
     val profile: String = PROFILE
 
+    /** The desktop Chrome this page presents ([BrowserIdentity]). */
+    val identity: BrowserIdentity = BrowserIdentity.of(appContext)
+
     private val debuggable = appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
 
     init {
@@ -123,35 +126,13 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
             javaScriptEnabled = true
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
-            userAgentString = DESKTOP_UA
             cacheMode = WebSettings.LOAD_DEFAULT
             loadWithOverviewMode = true
             useWideViewPort = true
         }
-        // The WebView stamps every request with "X-Requested-With: <our package>"; no browser does.
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
-            runCatching { androidx.webkit.WebSettingsCompat.setRequestedWithHeaderOriginAllowList(settings, emptySet()) }
-        }
-        // Client hints must agree with the desktop user agent.
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
-            runCatching {
-                val brands = listOf(
-                    androidx.webkit.UserAgentMetadata.BrandVersion.Builder()
-                        .setBrand("Chromium").setMajorVersion("133").setFullVersion("133.0.0.0").build(),
-                )
-                androidx.webkit.WebSettingsCompat.setUserAgentMetadata(settings, androidx.webkit.UserAgentMetadata.Builder()
-                    .setBrandVersionList(brands)
-                    .setFullVersion("133.0.0.0")
-                    .setPlatform("Linux")
-                    .setPlatformVersion("6.1.0")
-                    .setArchitecture("x86")
-                    .setBitness(64)
-                    .setMobile(false)
-                    .setModel("")
-                    .setWow64(false)
-                    .build())
-            }
-        }
+        // A desktop Chrome on Linux (on a phone UA the Web Player only offers to open the app), its
+        // client hints agreeing with its user agent, and no X-Requested-With where that can be dropped.
+        identity.applyTo(settings)
         // The page plays the audio: its renderer keeps its priority when the screen is off.
         setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
         val webView = this
@@ -159,7 +140,7 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
         hostChannel = exposeChannel("MyspotiHost", PLAYER_ORIGIN) { json -> _messages.tryEmit(json) }
         // Spotify Connect's commands leave from the app, without the WebView's X-Requested-With:
         // carrying it they are answered 200 and never delivered, and nothing plays (SpotifyRelay).
-        SpotifyRelay(this) { DESKTOP_UA }.install()
+        SpotifyRelay(this) { identity.userAgent }.install()
         webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 val allowed = request.resources.filter { it == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID }
@@ -347,7 +328,23 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
         main.removeCallbacks(retryPlayerPage)
         main.removeCallbacks(loadTimeout)
         beginLoginLoad()
-        view.loadUrl(LOGIN_URL)
+        // Signed out, a sign-in starts from nothing: a failed attempt leaves half a flow behind (its
+        // cookies and storage), and Spotify answers "Oops! Something went wrong" to a flow it cannot
+        // match with its own state (Orpheon's finding). Only on Spotify's own profile: without
+        // profiles the cookie store is shared with the other services' sign-ins.
+        val signedOut = runCatching { !AndroidSignIn.spotifyAccount(cookies().getCookie(PLAYER_ORIGIN)) }.getOrDefault(false)
+        if (signedOut && multiProfile) {
+            android.util.Log.i(LOG, "sign-in: starting from a clean slate")
+            cookies().removeAllCookies {
+                main.post {
+                    webStorage().deleteAllData()
+                    view.clearCache(true)
+                    view.loadUrl(LOGIN_URL)
+                }
+            }
+        } else {
+            view.loadUrl(LOGIN_URL)
+        }
     }
 
     /** Signs out of Spotify in this WebView: its cookies and storage go, then the login page opens. */
@@ -539,23 +536,6 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
 
     companion object {
         const val LOG = "Valen"
-
-        /**
-         * The desktop browser Valen presents (on a phone UA the Web Player only offers to open the
-         * Spotify app): a desktop Chrome on Linux, at the version of the WebView engine that is really running.
-         * It used to name Chrome 133 whatever the engine was: Spotify answers a browser it takes for
-         * an old (or a mismatched) Chrome with "Unsupported browser" and no player, the same
-         * failure the desktop had with a made-up version (AGENTS §5).
-         */
-        val DESKTOP_UA: String by lazy {
-            val major = runCatching {
-                android.webkit.WebView.getCurrentWebViewPackage()?.versionName?.substringBefore('.')?.toIntOrNull()
-            }.getOrNull()?.takeIf { it >= 100 } ?: FALLBACK_MAJOR
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$major.0.0.0 Safari/537.36"
-        }
-
-        /** Used only where the engine's version cannot be read. */
-        private const val FALLBACK_MAJOR = 142
 
         const val PLAYER_URL = "https://open.spotify.com/"
         const val LOGIN_URL = "https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F"

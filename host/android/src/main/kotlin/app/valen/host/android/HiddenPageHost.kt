@@ -40,7 +40,7 @@ import kotlinx.coroutines.flow.SharedFlow
  * Unlike Spotify's page it blocks nothing: what the service does with the hidden page on the user's
  * plan is what happens. Its media is heard: in Valen there is no native engine, the page itself is
  * the player, so no quiet-media hook is installed. A page whose renderer dies is made again at once
- * and loads [origin] ([gone]). [userAgent]: the desktop browser's, as the desktop site is the one
+ * and loads [origin] ([gone]). [identity]: the desktop browser's, as the desktop site is the one
  * whose player is used. Everything runs on the main thread.
  */
 class HiddenPageHost(
@@ -48,7 +48,7 @@ class HiddenPageHost(
     val profile: String,
     private val origin: String,
     private val sessionUrls: List<String>,
-    private val userAgent: String? = null,
+    private val identity: BrowserIdentity? = null,
 ) : PageHost, SessionCookies {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -88,8 +88,8 @@ class HiddenPageHost(
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
             cacheMode = WebSettings.LOAD_DEFAULT
-            userAgent?.let { userAgentString = it }
         }
+        identity?.applyTo(settings)
         val web = this
         cookies().apply { setAcceptCookie(true); setAcceptThirdPartyCookies(web, true) }
         channel = exposeChannel(CHANNEL, origin) { json -> _messages.tryEmit(json) }

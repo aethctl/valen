@@ -269,8 +269,23 @@ class LyricsBook(
         /** No sources: every song is "missing". For tests and builds that ask for none. */
         val None = LyricsBook(emptyList())
 
-        /** One key per recording, so the YouTube and SoundCloud copies of a song share their words. */
-        fun keyOf(track: Track): String = recordingKey(track.title, track.artist)
+        /**
+         * One key per recording and length, so copies of the same audio on two services share their
+         * words, and a version of another length does not. The lyrics' times are the length's: a
+         * music video with a 30 s intro ("(Official Video)" is dropped from the name, so it is the
+         * same recording) took the album version's lyrics and showed every line 30 s early, on
+         * both platforms, again at every play from the store. Lengths are taken in
+         * [LENGTH_STEP_MS] steps: copies seconds apart share a step or, across a step's edge, are
+         * simply looked up twice; a longer intro never shares.
+         */
+        fun keyOf(track: Track): String {
+            val recording = recordingKey(track.title, track.artist)
+            if (track.durationMs <= 0) return recording
+            return "$recording@${(track.durationMs + LENGTH_STEP_MS / 2) / LENGTH_STEP_MS}"
+        }
+
+        /** The step lengths are compared in (LRCLIB allows 4 s either way for one recording too). */
+        const val LENGTH_STEP_MS = 4_000L
 
         private const val KEPT_SONGS = 48
 

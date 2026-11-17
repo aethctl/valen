@@ -106,11 +106,11 @@ object ValenRuntime {
         webPlayer = WebPlayerHost(app)
         val ytmHost = HiddenPageHost(
             app, "valen-ytmusic",
-            AndroidSignIn.YTM_ORIGIN, AndroidSignIn.YTM_SESSION_URLS, WebPlayerHost.DESKTOP_UA,
+            AndroidSignIn.YTM_ORIGIN, AndroidSignIn.YTM_SESSION_URLS, webPlayer.identity,
         )
         val scHost = HiddenPageHost(
             app, "valen-soundcloud",
-            AndroidSignIn.SC_ORIGIN, AndroidSignIn.SC_SESSION_URLS, WebPlayerHost.DESKTOP_UA,
+            AndroidSignIn.SC_ORIGIN, AndroidSignIn.SC_SESSION_URLS, webPlayer.identity,
         )
         hidden[ProviderId.YOUTUBE_MUSIC] = ytmHost
         hidden[ProviderId.SOUNDCLOUD] = scHost
