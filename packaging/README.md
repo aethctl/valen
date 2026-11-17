@@ -55,6 +55,42 @@ The Chrome profile holds the user's sessions for all three services (YouTube Mus
 only use it for a sign-in: playback never goes through it). Treat it like a password store: never
 copy, log or commit it. Signing out in the app deletes that service's cookies from it.
 
+Closing a login window does not sign out. While Valen is open, it recovers the browser without a
+window using the same profile. If Chrome stays alive after its last window closes, Valen switches
+it back to headless mode only after confirming that no page remains. Browser replacements request
+a normal Chrome shutdown so pending cookie writes can finish. After three failed starts, use
+Connect/Retry to try again. Exiting Valen stops recovery and closes the browser it started.
+
+On NixOS, the default flake package includes this recovery code. From the project directory:
+
+```bash
+nix flake check "path:$PWD"
+nix build "path:$PWD"
+cat result/share/valen/package-version
+nix run "path:$PWD"
+```
+
+Close any older Valen instance before testing. The package version is
+`1.0.0-alpha.1-session-recovery.1`. A visible Chrome window is expected during sign-in; closing
+it should recover the connection headlessly, retaining the private profile's session cookies.
+These commands do not install or replace a system package. `path:` includes the untracked flake
+files without staging them in Git.
+
+The official ALPHA-1 AppImage predates the fix. `nix/session-recovery.nix` compiles the desktop
+host and `Providers.kt` against that pinned release's dependencies and replaces the corresponding
+classes in its extracted contents. The official JVM, launcher, UI, desktop entry and icon are
+retained. This build needs neither Gradle nor `.tools/` or local `build/` output; it is not a full
+source build. The overlay is tied to ALPHA-1 and Kotlin 2.4.21 and should be removed when a pinned
+upstream release contains the fix. Only x86_64-linux is provided because that is the architecture
+of the official AppImage. Chrome (including Widevine) is an unfree runtime dependency, allowed
+only in this flake's package set.
+
+For a NixOS configuration, add this repository as an input named `valen` and include
+`inputs.valen.packages.${pkgs.stdenv.hostPlatform.system}.default` in `environment.systemPackages`.
+After updating that configuration's locked `valen` input and rebuilding it, check
+`/run/current-system/sw/share/valen/package-version` to distinguish the fixed package from the
+old AppImage wrapper. Updating the input alone does not replace an already running process.
+
 Chrome listens on `127.0.0.1:9333` (`--remote-debugging-port`) for the app's own
 DevTools connection. If a Chrome is already listening there, Valen attaches to it
 instead of starting another; only a Chrome Valen started is closed on exit.

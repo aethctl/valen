@@ -26,6 +26,20 @@
 
 ## Risks / log
 
+- 2026-11-16 (desktop session recovery): account state is recovered from the private Chrome
+  profile after its login window closes. Real-account login, expiration, Disconnect and Spotify
+  playback after recovery still need manual testing. The default flake now overlays these source
+  changes onto the official ALPHA-1 AppImage; see `packaging/README.md` for testing and identifying
+  `1.0.0-alpha.1-session-recovery.1`. Its 45 focused recovery tests passed against the packaged jars,
+  including real Chrome with a temporary profile and dummy cookies.
+- Local Nixpkgs JDK 21 packaging: three captures of the newly generated jpackage binary printed
+  `pure virtual method called` / `terminate called without an active exception`. strace located
+  SIGABRT in a launcher subprocess before the main app continued; every capture completed with
+  exit 0 and a valid PNG. The official ALPHA-1 launcher did not print it in the same environment.
+  This remains a separate packaging issue to investigate, not a validated rendering failure or
+  account/session failure. The default Nix package reuses the official launcher/JVM; it does not
+  use the local jpackage launcher exhibiting this warning.
+
 - 2026-11-16 (Pass 29): "Your week" can only tell weeks counted by day. `ListeningLog.daily` starts
   with this build; a log whose counting began inside the last seven days is read whole (exact), but
   for the first week after updating an older log only the days since the update are known. Songs
@@ -58,7 +72,9 @@
 - Lyprio is a signed service and its address and key belong to whoever runs it (Metrolist ships them from CI secrets). Valen's builds now carry the same endpoint Metrolist publishes, read from the git-ignored `local.properties` at build time into both the desktop app (`LyprioBuild`) and the APK (`BuildConfig`); the environment and `lyprio.json` still win over it, and without any of them only LRCLIB answers. Checked live from the packaged desktop binary (a word-timed search, kept in the cache); Android's copy is only checked to be in the APK. The key is Metrolist's, so it can be rotated or rate-limited at any time.
 - **Spotify's half of an artist page is untested live** (it needs the signed-in Web Player); the GraphQL paths are the ones Orpheon's artist screen reads, plus `relatedContent.featuringV2`/`discoveredOnV2` for playlists, which are read defensively (empty when absent).
 - **Artists are matched across services by name only.** Two different artists with the same name on two services would be merged; Valen has no shared id to tell them apart (ISRCs are per song, not per artist).
-- **NixOS desktop testers cannot use Spotify yet** (browser discovery/profile on NixOS); a Nix flake is planned by the owner.
+- **NixOS real-account follow-up:** the flake supplies Chrome/Widevine and now packages session
+  recovery. The user reported successful login with the old wrapper, but losing the page connection
+  on browser close. Retest closing the login window and Spotify playback with the fixed package.
 - **Desktop media controls show repeat and shuffle as off** (`MprisService` reports constants); the app's own buttons are right. Wiring `LoopStatus`/`Shuffle` to the coordinator is a small follow-up.
 - **The disk cache trusts the first complete copy.** A song kept at one quality stays at that quality until it is trimmed or dropped; changing the quality setting does not refetch kept songs.
 - **Android's SoundCloud HLS streams are not kept** (segments are addressed per lookup); progressive SoundCloud and all YouTube Music songs are.

@@ -25,6 +25,16 @@ import java.util.concurrent.TimeUnit
 class ChromeLauncherTest {
 
     @Test
+    fun `only a valid target list without pages permits returning to headless mode`() {
+        assertEquals(false, hasPageTargets("[]"))
+        assertEquals(false, hasPageTargets("""[{"type":"service_worker"}]"""))
+        assertEquals(true, hasPageTargets("""[{"type":"page","url":"https://accounts.google.com/"}]"""))
+        assertNull(hasPageTargets("not JSON"))
+        assertNull(hasPageTargets("{}"))
+        assertNull(hasPageTargets("[{}]"))
+    }
+
+    @Test
     fun `a headless browser on the port is read as headless`() {
         FakeBrowser(port = 39331, headless = true).use { fake ->
             assertEquals(true, awaitMode(ChromeLauncher(port = fake.port)), "headless")
@@ -186,19 +196,29 @@ class ChromeLauncherTest {
         // Valen dying (a crash, a kill) closes the guardian's stdin; the browser must go with it.
         val guardian = ProcessBuilder(guarded(listOf("sleep", "300"))).start()
         var child: ProcessHandle? = null
-        val deadline = System.nanoTime() + 5_000_000_000L
-        while (child == null && System.nanoTime() < deadline) {
-            child = guardian.toHandle().descendants()
-                .filter { it.info().command().orElse("").endsWith("sleep") }
-                .findFirst().orElse(null)
-            if (child == null) Thread.sleep(50)
+        try {
+            val deadline = System.nanoTime() + 5_000_000_000L
+            while (child == null && System.nanoTime() < deadline) {
+                // Nixpkgs may implement sleep through the coreutils multicall executable.
+                // Identify our direct child by its argument, not the resolved executable name
+                // (and not the watchdog's short sleep).
+                child = guardian.toHandle().children()
+                    .filter { it.info().arguments().orElse(emptyArray()).contains("300") }
+                    .findFirst().orElse(null)
+                if (child == null) Thread.sleep(50)
+            }
+            org.junit.jupiter.api.Assertions.assertNotNull(child, "the guarded command never started")
+            guardian.outputStream.close()
+            assertTrue(guardian.waitFor(5, TimeUnit.SECONDS))
+            val gone = System.nanoTime() + 3_000_000_000L
+            while (child!!.isAlive && System.nanoTime() < gone) Thread.sleep(50)
+            assertFalse(child.isAlive, "the browser outlived Valen")
+        } finally {
+            guardian.outputStream.close()
+            guardian.destroy()
+            guardian.waitFor(5, TimeUnit.SECONDS)
+            child?.takeIf { it.isAlive }?.destroyForcibly()
         }
-        org.junit.jupiter.api.Assertions.assertNotNull(child, "the guarded command never started")
-        guardian.outputStream.close()
-        org.junit.jupiter.api.Assertions.assertTrue(guardian.waitFor(5, java.util.concurrent.TimeUnit.SECONDS))
-        val gone = System.nanoTime() + 3_000_000_000L
-        while (child!!.isAlive && System.nanoTime() < gone) Thread.sleep(50)
-        org.junit.jupiter.api.Assertions.assertFalse(child.isAlive, "the browser outlived Valen")
     }
 
     @Test

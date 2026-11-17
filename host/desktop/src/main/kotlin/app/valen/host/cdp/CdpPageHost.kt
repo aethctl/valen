@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -46,6 +47,9 @@ class CdpPageHost private constructor(
     private val sessionUrls: List<String>,
 ) : PageHost, SessionCookies {
     override val messages: SharedFlow<String> = listener.messages
+
+    /** False as soon as this tab disconnects, even if the browser still answers HTTP. */
+    val isOpen: Boolean get() = listener.isOpen
     override val loads: SharedFlow<String> = listener.loads
 
     override suspend fun evaluate(script: String) {
@@ -136,6 +140,8 @@ class CdpPageHost private constructor(
         private val guard = Any()
         private val pending = HashMap<Int, CompletableDeferred<JsonObject>>()
         private var closed: IllegalStateException? = null
+
+        val isOpen: Boolean get() = synchronized(guard) { closed == null }
 
         val opened = CompletableDeferred<Unit>()
         @Volatile private var url = ""
@@ -239,13 +245,18 @@ class CdpPageHost private constructor(
             }
             val listener = Listener(binding)
             val socket = http.newWebSocket(Request.Builder().url(page["webSocketDebuggerUrl"]!!.jsonPrimitive.content).build(), listener)
-            listener.opened.await()
             val host = CdpPageHost(socket, listener, sessionUrls)
-            host.send("Runtime.enable", buildJsonObject {})
-            host.send("Page.enable", buildJsonObject {})
-            host.send("Network.enable", buildJsonObject {})
-            host.send("Runtime.addBinding", buildJsonObject { put("name", binding) })
-            return host
+            try {
+                withTimeout(10_000) { listener.opened.await() }
+                host.send("Runtime.enable", buildJsonObject {})
+                host.send("Page.enable", buildJsonObject {})
+                host.send("Network.enable", buildJsonObject {})
+                host.send("Runtime.addBinding", buildJsonObject { put("name", binding) })
+                return host
+            } catch (e: Throwable) {
+                host.close()
+                throw e
+            }
         }
     }
 }

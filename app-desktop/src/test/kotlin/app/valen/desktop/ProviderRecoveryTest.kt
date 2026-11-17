@@ -36,6 +36,32 @@ import org.junit.jupiter.api.Test
 class ProviderRecoveryTest {
 
     @Test
+    fun `a health check that recovers Chrome rebuilds the adapter in the same command`() {
+        var onProbe: () -> Unit = {}
+        harness(alive = { onProbe(); true }, pollMs = 60_000) { h ->
+            runBlocking { h.provider.connect() }
+            onProbe = { h.browser.value = 1 }
+            runBlocking { h.provider.search("test", 1) }
+            assertEquals(2, h.builds.size, "used the old page after the health check replaced Chrome")
+            assertTrue(h.builds.first().closed)
+            assertEquals(SessionState.Connected("someone"), h.provider.session.value)
+        }
+    }
+
+    @Test
+    fun `exhausted browser recovery does not pretend the account signed out`() {
+        var alive = true
+        harness(alive = { alive }, pollMs = 50, quiet = true) { h ->
+            runBlocking { h.provider.connect() }
+            alive = false
+            runBlocking {
+                withTimeout(2_000) { h.provider.session.first { it is SessionState.Unavailable } }
+            }
+            assertTrue(h.builds.first().closed)
+        }
+    }
+
+    @Test
     fun `the same browser keeps one adapter`() = harness { h ->
         runBlocking { h.provider.connect() }
         runBlocking { h.provider.connect() }

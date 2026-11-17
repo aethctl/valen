@@ -1,11 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 package app.valen.host.desktop
 
+import app.valen.host.cdp.CdpBrowser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -22,9 +27,9 @@ import java.util.concurrent.TimeUnit
  * The profile lives in `$XDG_DATA_HOME/valen/chrome` (default `~/.local/share/valen/chrome`), so
  * the user's sign-ins survive restarts and never touch the browser they use for everything else.
  * A Chrome already listening on [port] is reused as it is (the user may have started it, or a
- * previous run left it open); only a Chrome this class started is stopped by [close]. The one
- * exception is a sign-in: a headless browser has no page a person can log in on, so [start] with
- * `visible = true` stops it ([stopBrowser]) and opens a windowed one, whoever started it.
+ * previous run left it open); only a Chrome this class started is stopped by [close]. The
+ * exceptions are switching to a visible sign-in, or returning to headless mode once every page
+ * of a visible browser has been closed. The private profile is reused in either direction.
  *
  * It runs **headless** unless asked otherwise: Spotify's Web Player needs a browser engine, not a
  * window, and a headless engine still opens a real audio stream (verified against PipeWire), so
@@ -99,18 +104,19 @@ class ChromeLauncher(
     private suspend fun launchLocked(visible: Boolean): Boolean {
         val wantHeadless = !visible
         if (probe()) {
-            // Only a sign-in needs a window. For playback any browser already running is good
-            // enough: replacing a visible one would close the page the user is logging in on, and
-            // replacing a headless one would restart the engine for nothing.
+            // Keep every window the user is still using. Some Chrome builds remain alive after
+            // the last window closes; creating a player tab there would reopen a visible window.
+            // Only a positively empty page list allows a silent switch back to headless mode.
             val actual = isHeadless()
             if (actual != null) headless = actual
-            if (visible && actual == true) {
+            val returnToBackground = !visible && actual == false && hasOpenPages() == false
+            if ((visible && actual == true) || returnToBackground) {
                 // A headless browser is replaced by a windowed one even when this launcher did not
                 // start it: an earlier Valen run that was killed never called close(), and a
                 // person cannot log in to a page they cannot see. Silence here was the bug - a
                 // Connect that did nothing looked like a dead button.
                 if (!stopBrowserLocked()) {
-                    lastError = "Could not close the headless Chrome on $cdpUrl: quit it and try again"
+                    lastError = "Could not replace Chrome on $cdpUrl: quit it and try again"
                     return false
                 }
             } else if (visible && actual == null) {
@@ -261,6 +267,16 @@ class ChromeLauncher(
         }.distinct()
         process = null
         if (targets.isEmpty()) return true
+        // A signal immediately after login can beat Chromium's asynchronous cookie write.
+        // Browser.close flushes the profile; signals remain the fallback for an unresponsive CDP.
+        if (runCatching { CdpBrowser.closeBrowser(cdpUrl) }.getOrDefault(false)) {
+            val gracefulBy = System.currentTimeMillis() + STOP_TIMEOUT_MS
+            while (System.currentTimeMillis() < gracefulBy && targets.any { it.isAlive }) delay(100)
+            if (targets.none { it.isAlive } && !probe()) {
+                lastError = null
+                return true
+            }
+        }
         targets.forEach { runCatching { it.destroy() } }
         val politeBy = System.currentTimeMillis() + STOP_TIMEOUT_MS
         while (System.currentTimeMillis() < politeBy && targets.any { it.isAlive }) delay(100)
@@ -291,6 +307,16 @@ class ChromeLauncher(
     }
 
     @Volatile private var cachedUserAgent: String? = null
+
+    private suspend fun hasOpenPages(): Boolean? = withContext(Dispatchers.IO) {
+        runCatching {
+            val client = http ?: return@runCatching null
+            val request = HttpRequest.newBuilder(URI.create("$cdpUrl/json/list"))
+                .timeout(Duration.ofSeconds(2)).GET().build()
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() == 200) hasPageTargets(response.body()) else null
+        }.getOrNull()
+    }
 
     /** Whether `/json/version` answers now. */
     suspend fun probe(): Boolean = withContext(Dispatchers.IO) {
@@ -603,6 +629,13 @@ class ChromeLauncher(
         }
     }
 }
+
+/** Unknown or malformed target lists must never be treated as permission to close a window. */
+internal fun hasPageTargets(value: String): Boolean? = runCatching {
+    Json.parseToJsonElement(value).jsonArray.map {
+        requireNotNull(it.jsonObject["type"]).jsonPrimitive.content
+    }.any { it == "page" }
+}.getOrNull()
 
 
 /** Past this size the browser's log is started afresh at the next launch. */
