@@ -30,9 +30,22 @@ class FfmpegEffectsTest {
     @TempDir
     lateinit var dir: Path
 
-    private val ffmpeg: String? = listOf("/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg").firstOrNull { Files.isExecutable(Path.of(it)) }
+    private val ffmpeg: String? = System.getenv("PATH").orEmpty().split(java.io.File.pathSeparator)
+        .filter { it.isNotBlank() }.map { Path.of(it).resolve("ffmpeg") }
+        .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }?.toString()
 
     private fun filters() = FfmpegEffects.filters(ffmpeg!!)
+
+    @Test
+    fun `unlimited EQ renders with fixed partial headroom`() {
+        assumeTrue(ffmpeg != null)
+        val effects = SoundEffects(peakLimiter = false,
+            parametricEq = ParametricEq(true, bands = listOf(ParametricBand(frequency = 1000f, gain = 6f))))
+        val graph = FfmpegEffects.graph(effects, filters()) { null }!!
+        assertTrue("alimiter" !in graph)
+        val measured = rmsDb(render(graph)) - rmsDb(render(null))
+        assertEquals(3.0, measured, .15)
+    }
 
     /**
      * Runs the graph on [seconds] of a [hz] sine (stereo, 48 kHz) and returns the left channel.
@@ -97,7 +110,7 @@ class FfmpegEffectsTest {
     }
 
     @Test
-    fun `parametric biquads match response including shelf Q and coexist with fixed bands`() {
+    fun `parametric biquads match response including shelf Q and replace fixed bands`() {
         assumeTrue(ffmpeg != null)
         val flat = rmsDb(render(null))
         EqFilterType.entries.forEach { type ->
@@ -109,7 +122,7 @@ class FfmpegEffectsTest {
         }
         val effects = SoundEffects(bands = SoundEffects.FLAT_BANDS.toMutableList().also { it[5] = 3f },
             parametricEq = ParametricEq(true, bands = listOf(ParametricBand(frequency = 1000f, gain = 3f))))
-        assertEquals(6.0, rmsDb(render(FfmpegEffects.graph(effects, filters()) { null })) - flat, .15)
+        assertEquals(3.0, rmsDb(render(FfmpegEffects.graph(effects, filters()) { null })) - flat, .15)
     }
 
     @Test

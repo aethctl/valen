@@ -166,11 +166,15 @@ class SoundDsp {
                 }
             }
             // Nothing leaves louder than the limit: the gain drops at once and comes back slowly.
-            limit += (1f - limit) * limitRelease
-            val peak = max(abs(l), abs(r)) * limit
-            if (peak > LIMIT) limit *= LIMIT / peak
-            l *= limit
-            r *= limit
+            if (e.peakLimiter) {
+                limit += (1f - limit) * limitRelease
+                val peak = max(abs(l), abs(r)) * limit
+                if (peak > LIMIT) limit *= LIMIT / peak
+                l *= limit
+                r *= limit
+            } else {
+                limit = 1f
+            }
             samples[i] = l
             if (n == 2) samples[i + 1] = r
         }
@@ -193,7 +197,8 @@ class SoundDsp {
         // A filter still in the chain keeps its memory, so a change in one band does not click in the others.
         val old = filters
         filters = list.map { f -> old.firstOrNull { it.same(f) }?.let { f.carryOn(it) } ?: f }.toTypedArray()
-        gain = 10f.pow((s.preamp + if (parametric.enabled) parametric.preamp else 0f) / 20f)
+        val preampDb = s.preamp + (if (parametric.enabled) parametric.preamp else 0f) + s.outputHeadroomDb(sr)
+        gain = 10f.pow(preampDb / 20f)
 
         compressing = s.evenOut >= 0.005f
         thresholdDb = -10f - 18f * s.evenOut
