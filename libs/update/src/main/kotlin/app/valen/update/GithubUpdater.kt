@@ -79,6 +79,9 @@ class GithubUpdater(
 
     @Volatile private var prefs = UpdatePrefs()
     @Volatile private var work: Job? = null
+
+    /** A look waits behind the running work (see [launchWork]). */
+    private var queued = false
     private val stateFile = File(folder, "updates.json")
     private val downloads = File(folder, "downloads")
     private var memory: Memory = readMemory()
@@ -105,8 +108,13 @@ class GithubUpdater(
         }
     }
 
+    /**
+     * A look now. A look asked for while other work is still finishing waits for it and then
+     * runs: the state can already read "Up to date" while that work's last steps run, and a press
+     * dropped there did nothing at all.
+     */
     override fun check() {
-        launchWork { look(force = true) }
+        launchWork(afterCurrent = true) { look(force = true) }
     }
 
     override fun update() {
@@ -152,10 +160,21 @@ class GithubUpdater(
         runCatching { onAnnounce(next) }
     }
 
-    private fun launchWork(block: suspend () -> Unit) {
+    /**
+     * One piece of work at a time. Normally a press while work runs does nothing (a second Update
+     * must not start a second download); [afterCurrent] queues it behind the running work instead.
+     * At most one waits: a second queued look while one already waits is dropped.
+     */
+    private fun launchWork(afterCurrent: Boolean = false, block: suspend () -> Unit) {
         synchronized(this) {
-            if (work?.isActive == true) return
+            val running = work?.takeIf { it.isActive }
+            if (running != null && (!afterCurrent || queued)) return
+            if (running != null) queued = true
             work = scope.launch(Dispatchers.IO) {
+                if (running != null) {
+                    running.join()
+                    synchronized(this@GithubUpdater) { queued = false }
+                }
                 try {
                     block()
                 } catch (e: CancellationException) {
