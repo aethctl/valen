@@ -1,5 +1,19 @@
 # Releasing Valen
 
+## The short way
+
+```bash
+scripts/release.sh --watch
+```
+
+That releases the next version (1.0.0-alpha.3 → 1.0.0-alpha.4, or 1.2.0 → 1.2.1): it sets
+`valen.version`, commits, pushes `main` and the tag, then waits for the build and prints the
+release's address. Give a version to choose it (`scripts/release.sh 1.1.0-beta.1`); leave out
+`--watch` to return as soon as the tag is pushed. It refuses to run off `main`, with uncommitted
+changes, or when `main` is behind GitHub's (pull first).
+
+The rest of this file is what happens underneath.
+
 A release is a tag. Push `vMAJOR.MINOR.PATCH`, optionally with `-alpha.N`, `-beta.N` or `-rc.N`, and
 `.github/workflows/release.yml` does the rest:
 
