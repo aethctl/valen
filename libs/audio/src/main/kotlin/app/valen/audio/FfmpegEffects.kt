@@ -42,9 +42,11 @@ object FfmpegEffects {
     fun graph(effects: SoundEffects, filters: Set<String>, room: (SoundEffects) -> Path?): String? {
         val e = effects.effective()
         if (e.isFlat) return null
-        val chain = mutableListOf("aresample=$RATE", "aformat=sample_fmts=fltp:channel_layouts=stereo")
+        val chain = mutableListOf("aresample=$RATE", "aformat=sample_fmts=dblp:channel_layouts=stereo")
         chain += time(e, filters)
-        if (abs(e.preamp) >= 0.05f) chain += "volume=${num(e.preamp)}dB"
+        val headroom = e.outputHeadroomDb(RATE.toFloat())
+        if (headroom != 0f) chain += "volume=${num(headroom)}dB:precision=double"
+        if (abs(e.preamp) >= 0.05f) chain += "volume=${num(e.preamp)}dB:precision=double"
         if (e.lowCut > 0f) chain += "highpass=f=${num(e.lowCut)}:t=q:w=0.7071:p=2"
         if (e.highCut > 0f) chain += "lowpass=f=${num(e.highCut)}:t=q:w=0.7071:p=2"
         if (abs(e.bass) >= 0.05f) chain += "bass=g=${num(e.bass)}:f=${num(BASS_HZ)}:t=q:w=0.7071"
@@ -53,11 +55,11 @@ object FfmpegEffects {
             if (abs(g) >= 0.05f) chain += "equalizer=f=${num(EQ_BANDS[i])}:t=q:w=${num(EQ_Q)}:g=${num(g)}"
         }
         if (e.parametricEq.enabled) {
-            if (e.parametricEq.preamp != 0f) chain += "volume=${num(e.parametricEq.preamp)}dB"
+            if (e.parametricEq.preamp != 0f) chain += "volume=${num(e.parametricEq.preamp)}dB:precision=double"
             e.parametricEq.bands.filter { it.active }.forEach { band ->
                 val c = band.coefficients(RATE.toFloat())
                 fun coefficient(value: Double) = String.format(Locale.ROOT, "%.15f", value)
-                chain += "biquad=b0=${coefficient(c.b0)}:b1=${coefficient(c.b1)}:b2=${coefficient(c.b2)}:a0=${coefficient(c.a0)}:a1=${coefficient(c.a1)}:a2=${coefficient(c.a2)}:precision=f64"
+                chain += "biquad=b0=${coefficient(c.b0)}:b1=${coefficient(c.b1)}:b2=${coefficient(c.b2)}:a0=${coefficient(c.a0)}:a1=${coefficient(c.a1)}:a2=${coefficient(c.a2)}:precision=f64:transform=tdii"
             }
         }
         if (e.evenOut >= 0.005f) chain += compressor(e.evenOut)
@@ -83,8 +85,9 @@ object FfmpegEffects {
             tail += if (e.width < 0.02f) "pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1" else "stereotools=mlev=1:slev=${num(e.width.coerceAtLeast(0.016f))}"
         }
         if (e.rotate > 0f) tail += "apulsator=mode=sine:hz=${num(1f / e.rotate, 4)}:amount=0.85:offset_l=0:offset_r=0.5"
-        tail += "alimiter=limit=0.95:attack=5:release=60:level=0"
-        graph.append(",").append(tail.joinToString(",")).append("[out]")
+        if (e.peakLimiter) tail += "alimiter=limit=0.95:attack=5:release=60:level=0"
+        if (tail.isNotEmpty()) graph.append(",").append(tail.joinToString(","))
+        graph.append("[out]")
         return graph.toString()
     }
 

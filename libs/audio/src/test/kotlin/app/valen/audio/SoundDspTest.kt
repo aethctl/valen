@@ -22,6 +22,20 @@ import kotlin.math.sqrt
  * the rest must do their part, nothing may clip, and it must be cheap enough for a phone.
  */
 class SoundDspTest {
+    @Test
+    fun `bass bursts do not modulate another tone with peak limiter disabled`() {
+        val high = sine(4000.0, level = .1f)
+        val bass = sine(60.0, level = .8f).also { signal ->
+            for (i in signal.indices) if ((i / 2) % 24000 >= 4800) signal[i] = 0f
+        }
+        val effects = SoundEffects(bass = 9f, peakLimiter = false)
+        val together = run(effects, FloatArray(high.size) { high[it] + bass[it] })
+        val highOnly = run(effects, high)
+        val bassOnly = run(effects, bass)
+        for (i in together.indices) {
+            assertEquals(highOnly[i] + bassOnly[i], together[i], .0001f)
+        }
+    }
 
     private val rate = 48_000
 

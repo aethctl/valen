@@ -563,6 +563,21 @@ private fun ToneTab(sound: SoundEffects, onChange: ((SoundEffects) -> SoundEffec
         { if (it == 0f) "Off" else "above ${SoundEffects.hertz(it)}" }, rest = 0f, log = true, off = 0f, reversed = true,
     )
     Section("Level")
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = Space.step2),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.step3),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Tame peaks", style = MaterialTheme.typography.titleSmall, color = ValenColors.Text)
+            Text(
+                "Softens loud hits. Turn off to keep their punch.",
+                style = MaterialTheme.typography.bodySmall,
+                color = ValenColors.Text2,
+            )
+        }
+        Toggle(checked = n.peakLimiter, onChange = { on -> onChange { it.copy(peakLimiter = on) } }, label = "Tame peaks")
+    }
     PencilSlider("Even out", n.evenOut, { v -> onChange { it.copy(evenOut = v) } }, 0f..1f, ::percent, step = 0.01f)
     PencilSlider("Preamp", n.preamp, { v -> onChange { it.copy(preamp = v) } }, -12f..12f, ::decibels, rest = 0f, step = 0.5f)
 }

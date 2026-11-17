@@ -9,6 +9,24 @@ import org.junit.jupiter.api.Test
 
 class ParametricEqTest {
     @Test
+    fun `headroom compensates boosts without amplifying cuts or doubling manual attenuation`() {
+        val boost = SoundEffects(peakLimiter = false, parametricEq = ParametricEq(true,
+            bands = listOf(ParametricBand(frequency = 1000f, gain = 6f))))
+        assertEquals(-3f, boost.outputHeadroomDb(), .05f)
+        assertEquals(0f, boost.copy(peakLimiter = true).outputHeadroomDb())
+        assertEquals(0f, boost.copy(parametricEq = boost.parametricEq.copy(preamp = -8f)).outputHeadroomDb())
+        assertEquals(0f, SoundEffects(peakLimiter = false).outputHeadroomDb())
+    }
+    @Test
+    fun `parametric playback replaces saved graphic tone without erasing it`() {
+        val eq = ParametricEq(true, bands = listOf(ParametricBand(frequency = 1000f, gain = 3f)))
+        val saved = SoundEffects(preamp = -6f, bass = 8f, bands = List(EQ_BANDS.size) { 4f }, parametricEq = eq)
+        assertEquals(3f, saved.responseDb(1000f), .01f)
+        assertEquals(0f, saved.effective().preamp)
+        assertEquals(-6f, saved.preamp)
+        assertEquals(-6f, saved.copy(parametricEq = eq.copy(enabled = false)).effective().preamp)
+    }
+    @Test
     fun `normalization limits all fields and pass filters have no gain`() {
         val eq = ParametricEq(true, Float.NaN, listOf(ParametricBand(EqFilterType.HIGH_PASS, Float.NaN, 10f, Float.POSITIVE_INFINITY)) + List(25) {
             ParametricBand(frequency = 50000f, gain = -50f, q = 0f)

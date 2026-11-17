@@ -70,7 +70,9 @@ data class SoundEffects(
     val rotate: Float = 0f,
     /** How much loud and quiet are evened out (a compressor), 0 to 1. */
     val evenOut: Float = 0f,
-    /** Astra-compatible parametric EQ, independent of the ten fixed bands and other effects. */
+    /** Linked peak protection; off uses fixed partial EQ gain compensation instead. */
+    val peakLimiter: Boolean = true,
+    /** Astra-compatible parametric EQ; replaces the graphic tone stage while enabled. */
     val parametricEq: ParametricEq = ParametricEq(),
 ) {
     /** Within every range, the band list ten long. */
@@ -96,7 +98,16 @@ data class SoundEffects(
     )
 
     /** What a player is given: these settings, or nothing at all while they are off. */
-    fun effective(): SoundEffects = if (on) normalized() else FLAT
+    fun effective(): SoundEffects {
+        if (!on) return FLAT
+        val n = normalized()
+        // The parametric EQ replaces the graphic tone stage. Keep the saved graphic
+        // settings so disabling it restores them, but never cascade two equalizers.
+        return if (n.parametricEq.enabled) n.copy(
+            bands = List(EQ_BANDS.size) { 0f }, preamp = 0f, bass = 0f, treble = 0f,
+            lowCut = 0f, highCut = 0f,
+        ) else n
+    }
 
     /** Nothing here changes the sound. */
     val isFlat: Boolean
@@ -123,7 +134,7 @@ data class SoundEffects(
      * is the curve heard.
      */
     fun responseDb(hz: Float, sampleRate: Float = 48000f): Float {
-        val n = normalized()
+        val n = effective()
         var db = n.preamp
         n.bands.forEachIndexed { i, g -> if (abs(g) >= 0.05f) db += Biquad.peaking(EQ_BANDS[i], EQ_Q, g, sampleRate).db(hz, sampleRate) }
         if (abs(n.bass) >= 0.05f) db += Biquad.lowShelf(BASS_HZ, n.bass, sampleRate).db(hz, sampleRate)
@@ -132,6 +143,28 @@ data class SoundEffects(
         if (n.highCut > 0f) db += Biquad.lowPass(n.highCut, sampleRate).db(hz, sampleRate)
         db += n.parametricEq.responseDb(hz, sampleRate)
         return db
+    }
+
+    /** Fixed EQ headroom, computed on settings changes, never from the playing signal.
+     * The graph remains the requested tone curve; this is a separate output-level correction.
+     * A frequency-response estimate reduces overload risk, not a transient peak guarantee.
+     */
+    fun outputHeadroomDb(sampleRate: Float = 48000f): Float {
+        val n = effective()
+        if (n.peakLimiter || !n.shapesTone) return 0f
+        val upper = sampleRate * .49f
+        var peak = 0f
+        // Include exact filter centres as well as a dense logarithmic sweep for overlapping bands.
+        for (i in 0..1024) {
+            val hz = (10.0 * (upper / 10.0).pow(i / 1024.0)).toFloat()
+            peak = maxOf(peak, n.responseDb(hz, sampleRate))
+        }
+        (EQ_BANDS + n.parametricEq.bands.map { it.frequency } + listOf(BASS_HZ, TREBLE_HZ)).forEach {
+            if (it < upper) peak = maxOf(peak, n.responseDb(it, sampleRate))
+        }
+        // Partial compensation keeps some of the boost's impact. This is a fixed
+        // level adjustment, not peak protection: hot masters may still clip.
+        return if (peak > .05f) -peak * .5f else 0f
     }
 
     /** The settings as the notebook writes them down, one line per effect that is doing something. */

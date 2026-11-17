@@ -57,6 +57,10 @@ Rules:
   adapters did through Web Audio (`SoundWebAudio`, injected with the page script). Spotify's audio is DRM-protected media, which Web Audio hears as silence, so it stays
   `None` and must never route it. A speed other than 1× means the song's time runs at that rate:
   report positions in song time; the coordinator extrapolates at the same rate.
+  An enabled parametric EQ replaces the saved graphic bands, preamp, shelves and cuts.
+  Native output honors `peakLimiter` (on by default for existing settings). When off,
+  output uses fixed attenuation equal to half the maximum positive EQ response;
+  this preserves dynamics but does not guarantee protection from clipping.
 - **Signed out.** `playsSignedOut` false means the service plays for a signed-in account only
   (Spotify). The coordinator then never picks that copy over a playable one, skips such songs when it
   moves through the queue, and answers a tap with "Sign in to … to play this" instead of calling
