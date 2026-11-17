@@ -117,7 +117,7 @@ private val TileHeight = 96.dp
 private val RowHeight = 52.dp
 
 /** The step a tile or a group stands on: a white veil on glass, the next surface on the sheet. */
-private fun stepFill(glass: Boolean): Color = if (glass) ValenColors.Fill else ValenColors.Surface2
+internal fun stepFill(glass: Boolean): Color = if (glass) ValenColors.Fill else ValenColors.Surface2
 
 /**
  * The song, its heart, four quick things as tiles (the most likely first), then the rest as rows.

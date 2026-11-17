@@ -42,3 +42,42 @@ class ValenVersionTest {
         assertFalse(UpdatePrefs(testBuilds = false).takesTestBuilds(test))
     }
 }
+
+class ReleaseNotesTest {
+    @Test
+    fun `GitHub's generated notes read as plain lines`() {
+        val notes = """
+            ## What's Changed
+            * fix(audio): make peak limiting optional and balance EQ boost gain by @feelyourwarmth in https://github.com/dodo986/valen/pull/2
+            * Add **bold** and [a link](https://example.com) and `code`
+
+
+            **Full Changelog**: https://github.com/dodo986/valen/compare/v1.0.0-alpha.3...v1.0.0-alpha.4
+        """.trimIndent()
+        assertEquals(
+            listOf(
+                NotePiece.Heading("What's Changed"),
+                NotePiece.Item("fix(audio): make peak limiting optional and balance EQ boost gain by @feelyourwarmth (#2)"),
+                NotePiece.Item("Add bold and a link and code"),
+            ),
+            releaseNotes(notes),
+        )
+    }
+
+    @Test
+    fun `a heading with nothing under it and empty notes say nothing`() {
+        assertEquals(emptyList<NotePiece>(), releaseNotes(""))
+        assertEquals(emptyList<NotePiece>(), releaseNotes("## What's Changed\n\n**Full Changelog**: https://x"))
+    }
+
+    @Test
+    fun `later keeps the sheet away a day, and only for that release`() {
+        val asset = ReleaseAsset("linux-appimage", "a", 1, "0".repeat(64))
+        val four = AppRelease("1.0.0-alpha.4", 10_000_104, true, asset, "p", "u")
+        val five = four.copy(version = "1.0.0-alpha.5", code = 10_000_105)
+        val prefs = UpdatePrefs().later(four, now = 1_000)
+        assertFalse(prefs.mayShow(four, now = 1_000 + UpdatePrefs.LATER_MS - 1))
+        assertTrue(prefs.mayShow(four, now = 1_000 + UpdatePrefs.LATER_MS))
+        assertTrue(prefs.mayShow(five, now = 2_000))
+    }
+}

@@ -819,9 +819,14 @@ private fun UpdatesGroup(updates: Updates, prefs: UpdatePrefs, onChange: ((Updat
 private fun UpdateRow(updates: Updates, state: UpdateState) {
     val reduced = LocalReducedMotion.current
     val words = updateWords(updates, state)
+    val sheet = app.valen.ui.update.LocalUpdateSheet.current
+    // With a release on show, the row opens its sheet: what changed, the file, the presses.
+    val hasRelease = state is UpdateState.Available || state is UpdateState.Downloading || state is UpdateState.Ready ||
+        state is UpdateState.Installing || state is UpdateState.Installed || (state as? UpdateState.Failed)?.release != null
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (hasRelease) Modifier.tap(onClick = sheet::show) else Modifier)
             .heightIn(min = 72.dp)
             .padding(horizontal = Space.step4, vertical = Space.step3),
     ) {

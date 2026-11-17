@@ -97,7 +97,7 @@ valen [--width N] [--height N] [--route home|search|playlists|import|now-playing
 | `VALEN_CAPTURE_RECAP=N` | `--screenshot` only: open "Your week" on page N (0 is the first) a moment in, so it pours in |
 | `VALEN_CAPTURE_RECAP_TURN=1` | `--screenshot` only: turn the story to its next page halfway (with `VALEN_CAPTURE_FRAMES`, to see the slap) |
 | `VALEN_CAPTURE_SETTINGS=PART` | `--screenshot --route settings`: open that part of Settings (`services`, `playback`, `look`, `week`, `downloads`, `discord`, `about`, `test`) |
-| `VALEN_CAPTURE_UPDATE=STATE` | `--screenshot` only: Settings → About shows that update state (`uptodate`, `checking`, `available`, `downloading`, `ready`, `installed`, `failed`, `told`, `off`) of an invented 9.9.9-beta.1; GitHub is not asked. Unset, a screenshot has no updater |
+| `VALEN_CAPTURE_UPDATE=STATE` | `--screenshot` only: Settings → About shows that update state (`uptodate`, `checking`, `available`, `downloading`, `ready`, `installed`, `failed`, `told`, `off`) of an invented 9.9.9-beta.1, which also opens the update sheet over any route (`pour` runs a download in it, then Ready); GitHub is not asked. Unset, a screenshot has no updater |
 | `VALEN_CAPTURE_IDLE=1` | `--screenshot` only: after the settle, print how many of 20 more frames still ask to be redrawn (a redraw loop shows as 20 of 20) |
 | `VALEN_FFPLAY_BIN` | ffplay used for native playback |
 | `VALEN_CHROME_BIN` | Chrome/Chromium for Spotify |
@@ -185,8 +185,10 @@ Key invariants:
   a rename in its own folder (never a half-written file under its name); Restart waits for this
   process to exit before starting the new one (one Valen at a time). Android checks package, number
   and signer before `PackageInstaller`, and downloads by itself only off metered networks. Nix,
-  source builds and the debug app are only told. A release is announced once per version
-  (`announcement`, a confirmation that leaves by itself).
+  source builds and the debug app are only told. A ready release is shown by the UI's update sheet
+  (`ui/update/UpdateSheet.kt`), by itself once per release a run, unless "Later" holds it (a day,
+  for that release: `UpdatePrefs.laterCode/laterUntil`); Settings → About's row opens it too. The
+  sheet reuses the song menu's containers (`PouredPanel`, `PouredSheet` in `ui/menu/MenuHost.kt`).
 
 - **The queue is Valen's.** Adapters play exactly one track. `PlaybackCoordinator` owns
   queue/index/now-playing and is the only thing the UI talks to. Never let an adapter invent a queue.

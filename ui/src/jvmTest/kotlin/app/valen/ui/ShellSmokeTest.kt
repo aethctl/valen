@@ -134,6 +134,7 @@ class ShellSmokeTest {
         lyrics: app.valen.core.LyricsBook = app.valen.core.LyricsBook.None,
         offline: app.valen.core.OfflineShelf? = null,
         presence: app.valen.core.PresenceLink? = null,
+        updates: app.valen.core.Updates? = null,
     ) = PlaybackCoordinator(
         providers = ProviderId.services.map { FakeProvider(it) },
         scope = scope,
@@ -142,6 +143,8 @@ class ShellSmokeTest {
         lyrics = lyrics,
         offline = offline,
         presence = presence,
+        version = "1.0.0-alpha.4",
+        updates = updates,
     )
 
     /**
@@ -192,13 +195,14 @@ class ShellSmokeTest {
         lyrics: app.valen.core.LyricsBook = app.valen.core.LyricsBook.None,
         offline: app.valen.core.OfflineShelf? = null,
         presence: app.valen.core.PresenceLink? = null,
+        updates: app.valen.core.Updates? = null,
         block: SkikoComposeUiTest.(PlaybackCoordinator, PlaylistManager) -> Unit,
     ) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         try {
             runSkikoComposeUiTest(size = Size(width.toFloat(), height.toFloat())) {
                 mainClock.autoAdvance = false
-                val coordinator = coordinator(scope, lyrics, offline, presence)
+                val coordinator = coordinator(scope, lyrics, offline, presence, updates)
                 block(coordinator, playlists(coordinator))
             }
         } finally {
@@ -416,6 +420,72 @@ class ShellSmokeTest {
             state.value = state.value.copy(singles = state.value.singles + track.key, waiting = state.value.waiting + track.key)
         }
         override val folder: String = "/home/tester/Music/Valen"
+    }
+
+    /** An update that is downloaded and checked, waiting for Install; counts the presses. */
+    private class FakeUpdates : app.valen.core.Updates {
+        val release = app.valen.core.AppRelease(
+            version = "1.0.0-alpha.5",
+            code = 10_000_105,
+            test = true,
+            asset = app.valen.core.ReleaseAsset("linux-appimage", "Valen-1.0.0-alpha.5-x86_64.AppImage", 116_000_000, "0".repeat(64)),
+            page = "https://example.invalid/release",
+            url = "https://example.invalid/file",
+            notes = "## What's Changed\n* The sheet pours in by @someone in https://github.com/dodo986/valen/pull/9",
+        )
+        var updatePresses = 0
+        var pagesOpened = 0
+        override val current = "1.0.0-alpha.4"
+        override val route = app.valen.core.UpdateRoute.Itself
+        override val elsewhere: String? = null
+        override val state = MutableStateFlow<app.valen.core.UpdateState>(app.valen.core.UpdateState.Ready(release))
+        override fun check() {}
+        override fun update() {
+            updatePresses++
+            state.value = app.valen.core.UpdateState.Installed(release)
+        }
+        override fun restart() {}
+        override fun openPage(release: app.valen.core.AppRelease) { pagesOpened++ }
+    }
+
+    @Test
+    @org.junit.jupiter.api.Timeout(180)
+    fun `a ready update opens its sheet by itself, installs, and Later keeps it away a day`() {
+        for ((width, height) in listOf(1600 to 900, 390 to 844)) {
+            val updates = FakeUpdates()
+            inApp(width, height, updates = updates) { coordinator, playlists ->
+                setContent { ValenApp(coordinator, playlists, "home") }
+                // It waits a moment after the release is ready, so it never lands on a page mid-pour.
+                settle(2_400L)
+                onNodeWithText("What changed").assertExists()
+                onNodeWithText("The sheet pours in by @someone (#9)").assertExists()
+                onNode(hasText("Install") and hasClickAction()).performClick()
+                settle(1_200L)
+                assertEquals(1, updates.updatePresses)
+                onNode(hasText("Restart now") and hasClickAction()).assertExists()
+                onNode(hasText("Release page") and hasClickAction()).performClick()
+                settle()
+                assertEquals(1, updates.pagesOpened)
+
+                onNode(hasText("Later") and hasClickAction()).performClick()
+                settle(1_200L)
+                assertTrue(runCatching { onNodeWithText("What changed").assertExists() }.isFailure)
+                val later = coordinator.settings.value.updates
+                assertEquals(updates.release.code, later.laterCode)
+                assertTrue(later.laterUntil > System.currentTimeMillis() + app.valen.core.UpdatePrefs.LATER_MS - 60_000)
+
+                if (width > 1000) {
+                    // Settings → About: the update's row opens the sheet again.
+                    onNodeWithText("Settings").performClick()
+                    settle(1_200L)
+                    onNode(hasText("Valen 1.0.0-alpha.5 opens next time") and hasClickAction()).performClick()
+                    settle(1_200L)
+                    onNode(hasText("Valen 1.0.0-alpha.5 is ready") and hasClickAction()).performClick()
+                    settle(1_200L)
+                    onNodeWithText("What changed").assertExists()
+                }
+            }
+        }
     }
 
     @Test

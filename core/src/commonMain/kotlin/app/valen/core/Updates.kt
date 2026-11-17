@@ -82,6 +82,8 @@ data class AppRelease(
     val page: String,
     /** Where the file is downloaded from. */
     val url: String,
+    /** The release's notes as GitHub has them (Markdown); empty when it has none. */
+    val notes: String = "",
 )
 
 /** How this copy of Valen is updated. */
@@ -136,9 +138,75 @@ data class UpdatePrefs(
     val check: Boolean = true,
     /** Take test builds (pre-releases) too. Null follows this build: a test build takes them, a release does not. */
     val testBuilds: Boolean? = null,
+    /** "Later" on the update sheet: the release it was pressed for (its number), and until when (wall clock, ms). */
+    val laterCode: Int = 0,
+    val laterUntil: Long = 0,
 ) {
     fun takesTestBuilds(current: ValenVersion?): Boolean = testBuilds ?: (current?.isTest ?: true)
+
+    /** Whether the update sheet may open by itself for [release] at [now]: not while "Later" holds for it. */
+    fun mayShow(release: AppRelease, now: Long): Boolean = !(laterCode == release.code && now < laterUntil)
+
+    /** "Later" for [release]: the sheet stays away for [LATER_MS]; a newer release shows at once. */
+    fun later(release: AppRelease, now: Long): UpdatePrefs = copy(laterCode = release.code, laterUntil = now + LATER_MS)
+
+    companion object {
+        /** How long "Later" keeps the update sheet away: a day. */
+        const val LATER_MS = 24 * 60 * 60_000L
+    }
 }
+
+/** A piece of a release's notes, read from GitHub's Markdown. */
+sealed interface NotePiece {
+    data class Heading(val text: String) : NotePiece
+
+    data class Item(val text: String) : NotePiece
+
+    data class Line(val text: String) : NotePiece
+}
+
+/**
+ * A release's notes as a few plain pieces: headings, list items and lines, with Markdown's marks
+ * taken off. GitHub's generated notes are mostly links; a pull request's link becomes "#2", a
+ * profile stays "@name", and the "Full Changelog" line is left out (the release page has it).
+ */
+fun releaseNotes(markdown: String, most: Int = 14): List<NotePiece> {
+    val pieces = mutableListOf<NotePiece>()
+    for (raw in markdown.replace("\r", "").lines()) {
+        val line = raw.trim()
+        if (line.isEmpty() || line.startsWith("<!--")) continue
+        if (line.contains("Full Changelog", ignoreCase = true)) continue
+        val piece = when {
+            line.startsWith("#") -> NotePiece.Heading(plainNote(line.trimStart('#')))
+            line.startsWith("* ") || line.startsWith("- ") || line.startsWith("+ ") -> NotePiece.Item(plainNote(line.drop(2)))
+            else -> NotePiece.Line(plainNote(line))
+        }
+        val text = when (piece) {
+            is NotePiece.Heading -> piece.text
+            is NotePiece.Item -> piece.text
+            is NotePiece.Line -> piece.text
+        }
+        if (text.isNotBlank()) pieces += piece
+        if (pieces.size >= most) break
+    }
+    // A heading with nothing under it says nothing.
+    while (pieces.lastOrNull() is NotePiece.Heading) pieces.removeAt(pieces.lastIndex)
+    return pieces
+}
+
+private val PULL = Regex("""\s*in\s+https://github\.com/[^/\s]+/[^/\s]+/pull/(\d+)""")
+private val LINK = Regex("""\[([^\]]*)\]\(([^)]*)\)""")
+private val URL = Regex("""https?://\S+""")
+private val MARKS = Regex("""(\*\*|__|`)""")
+
+private fun plainNote(text: String): String = text
+    .replace(PULL) { " (#${it.groupValues[1]})" }
+    .replace(LINK) { it.groupValues[1] }
+    .replace(URL, "")
+    .replace(MARKS, "")
+    .replace(Regex("""\s+"""), " ")
+    .trim()
+    .trimEnd(':')
 
 /** Valen's updates, as the UI sees them. One per app; none in tests that do not ask for it. */
 interface Updates {

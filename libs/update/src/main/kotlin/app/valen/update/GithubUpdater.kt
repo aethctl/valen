@@ -238,12 +238,12 @@ class GithubUpdater(
             val platform = installer.platform
             if (platform == null) {
                 // Told only: any release counts, the page is where it is.
-                return AppRelease(version.toString(), version.code, version.isTest || release.prerelease, NO_FILE, release.page, release.page)
+                return AppRelease(version.toString(), version.code, version.isTest || release.prerelease, NO_FILE, release.page, release.page, release.body.orEmpty())
             }
             val file = manifest.assets.firstOrNull { it.platform == platform } ?: continue
             val listed = release.assets.firstOrNull { it.name == file.name } ?: continue
             if (listed.size != file.size || !HEX64.matches(file.sha256)) continue
-            return AppRelease(version.toString(), version.code, version.isTest || release.prerelease, file, release.page, listed.url)
+            return AppRelease(version.toString(), version.code, version.isTest || release.prerelease, file, release.page, listed.url, release.body.orEmpty())
         }
         return null
     }
@@ -443,6 +443,7 @@ class GithubUpdater(
         val draft: Boolean = false,
         val prerelease: Boolean = false,
         @SerialName("html_url") val page: String = "",
+        val body: String? = null,
         val assets: List<GhAsset> = emptyList(),
     )
 

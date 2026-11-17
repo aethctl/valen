@@ -98,6 +98,9 @@ private val DropRadius = 22.dp
 /** Below this much room on the anchor's side, the menu stops hanging off it and centres on it. */
 private val PanelMinRoom = 240.dp
 
+/** What a sheet (or a panel that opened by itself) dims behind it: black at 56%. */
+private val SheetScrim = Color.Black.copy(alpha = 0.56f)
+
 /** The phone sheet's handle, at rest. */
 private val HandleWidth = 36.dp
 
@@ -144,12 +147,14 @@ fun SongMenuHost(
     }
     Box(modifier = modifier) {
         if (compact) {
-            MenuSheet(request = current, open = open, onDismiss = state::close, onGone = gone) { body(false) }
+            PouredSheet(key = current.id, open = open, onDismiss = state::close, onGone = gone) { body(false) }
         } else {
-            MenuPopover(
-                request = current,
+            PouredPanel(
+                key = current.id,
                 open = open,
-                page = page,
+                anchor = current.anchor,
+                alignEnd = current.alignEnd,
+                sweepKey = page,
                 start = start,
                 bottom = bottom,
                 onDismiss = state::close,
@@ -214,20 +219,28 @@ private fun MenuBody(
  * size, so the glass keeps seeing exactly what is behind it while it opens.
  */
 @Composable
-private fun MenuPopover(
-    request: MenuRequest,
+internal fun PouredPanel(
+    key: Any,
     open: Boolean,
-    page: MenuPage,
+    /** What opened it, in the root's coordinates; null pours it from the middle of the window. */
+    anchor: Rect?,
+    alignEnd: Boolean,
+    /** A change of it sends the band of light across the glass (a menu's page). */
+    sweepKey: Any?,
     start: Dp,
     bottom: Dp,
     onDismiss: () -> Unit,
     onGone: () -> Unit,
+    width: Dp = PanelWidth,
+    closeLabel: String = "Close menu",
+    /** Dims what is behind it as it pours, for a panel that opened by itself (the update sheet). */
+    scrim: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val reduced = LocalReducedMotion.current
-    val across = remember(request.id) { Animatable(0f) }
-    val down = remember(request.id) { Animatable(0f) }
-    LaunchedEffect(request.id, open) {
+    val across = remember(key) { Animatable(0f) }
+    val down = remember(key) { Animatable(0f) }
+    LaunchedEffect(key, open) {
         if (open) {
             if (reduced) {
                 across.snapTo(1f)
@@ -245,18 +258,26 @@ private fun MenuPopover(
         }
     }
     var host by remember { mutableStateOf(Offset.Zero) }
-    val below = remember(request.id) { arrayOfNulls<Boolean>(1) }
-    var origin by remember(request.id) { mutableStateOf(Offset.Zero) }
+    val below = remember(key) { arrayOfNulls<Boolean>(1) }
+    var origin by remember(key) { mutableStateOf(Offset.Zero) }
     val focus = remember { FocusRequester() }
-    LaunchedEffect(request.id) { runCatching { focus.requestFocus() } }
+    LaunchedEffect(key) { runCatching { focus.requestFocus() } }
 
     Box(modifier = Modifier.fillMaxSize().onGloballyPositioned { host = it.positionInRoot() }) {
+        if (scrim) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = min(across.value, down.value).coerceIn(0f, 1f) }
+                    .background(SheetScrim),
+            )
+        }
         if (open) {
             // Anywhere else closes it; nothing under it is pressed by that click.
             Box(
                 Modifier
                     .fillMaxSize()
-                    .semantics { contentDescription = "Close menu" }
+                    .semantics { contentDescription = closeLabel }
                     .clickable(interactionSource = rememberInteraction(), indication = null, onClick = onDismiss),
             )
         }
@@ -299,7 +320,7 @@ private fun MenuPopover(
                             }
                         },
                 ) {
-                    GlassSurface(shape = Radii.cardShape, corner = Radii.card, sweepKey = page) {
+                    GlassSurface(shape = Radii.cardShape, corner = Radii.card, sweepKey = sweepKey) {
                         Box(
                             Modifier.graphicsLayer {
                                 alpha = ((min(across.value, down.value) - 0.35f) / 0.65f).coerceIn(0f, 1f)
@@ -315,25 +336,27 @@ private fun MenuPopover(
             val maxX = constraints.maxWidth - margin
             val minY = margin
             val maxY = constraints.maxHeight - bottom.roundToPx() - margin
-            val width = min(PanelWidth.roundToPx(), maxX - minX).coerceAtLeast(0)
-            val anchor = request.anchor?.translate(-host)
+            val width = min(width.roundToPx(), maxX - minX).coerceAtLeast(0)
+            val spot = anchor?.translate(-host)
                 ?: Rect(Offset(constraints.maxWidth / 2f, constraints.maxHeight / 2f), Size(1f, 1f))
             // Which side it hangs on is decided once, so a page change never flips it over.
-            val hang = below[0] ?: (anchor.center.y < (minY + maxY) / 2f).also { below[0] = it }
-            val room = if (hang) maxY - (anchor.bottom.toInt() + gap) else (anchor.top.toInt() - gap) - minY
-            val hanging = room >= PanelMinRoom.roundToPx()
+            val hang = below[0] ?: (spot.center.y < (minY + maxY) / 2f).also { below[0] = it }
+            val room = if (hang) maxY - (spot.bottom.toInt() + gap) else (spot.top.toInt() - gap) - minY
+            // Nothing opened it (the update sheet): it stands in the middle, as tall as it needs.
+            val hanging = anchor != null && room >= PanelMinRoom.roundToPx()
             val tallest = (if (hanging) room else maxY - minY).coerceAtLeast(0)
             val panel = measurables.first().measure(Constraints(minWidth = width, maxWidth = width, maxHeight = tallest))
-            val x = (if (request.alignEnd) anchor.right.toInt() - width else anchor.left.toInt())
+            val x = (if (anchor == null) (minX + maxX - width) / 2 else if (alignEnd) spot.right.toInt() - width else spot.left.toInt())
                 .coerceIn(minX, max(minX, maxX - width))
             val y = when {
-                hanging && hang -> anchor.bottom.toInt() + gap
-                hanging -> anchor.top.toInt() - gap - panel.height
-                else -> (anchor.center.y.toInt() - panel.height / 2).coerceIn(minY, max(minY, maxY - panel.height))
+                hanging && hang -> spot.bottom.toInt() + gap
+                hanging -> spot.top.toInt() - gap - panel.height
+                anchor == null -> ((minY + maxY) / 2 - panel.height / 2).coerceIn(minY, max(minY, maxY - panel.height))
+                else -> (spot.center.y.toInt() - panel.height / 2).coerceIn(minY, max(minY, maxY - panel.height))
             }
             origin = Offset(
-                (anchor.center.x - x).coerceIn(0f, width.toFloat()),
-                (anchor.center.y - y).coerceIn(0f, panel.height.toFloat()),
+                (spot.center.x - x).coerceIn(0f, width.toFloat()),
+                (spot.center.y - y).coerceIn(0f, panel.height.toFloat()),
             )
             layout(constraints.maxWidth, constraints.maxHeight) { panel.place(x, y) }
         }
@@ -349,17 +372,18 @@ private fun MenuPopover(
  * own, outside the wall that glass sees through.
  */
 @Composable
-private fun MenuSheet(
-    request: MenuRequest,
+internal fun PouredSheet(
+    key: Any,
     open: Boolean,
     onDismiss: () -> Unit,
     onGone: () -> Unit,
+    closeLabel: String = "Close menu",
     content: @Composable () -> Unit,
 ) {
     val reduced = LocalReducedMotion.current
     val scope = rememberCoroutineScope()
-    val progress = remember(request.id) { Animatable(0f) }
-    LaunchedEffect(request.id, open) {
+    val progress = remember(key) { Animatable(0f) }
+    LaunchedEffect(key, open) {
         if (open) {
             if (reduced) progress.snapTo(1f) else progress.animateTo(1f, Motion.bloom())
         } else {
@@ -376,11 +400,11 @@ private fun MenuSheet(
             Modifier
                 .fillMaxSize()
                 .graphicsLayer { alpha = progress.value.coerceIn(0f, 1f) }
-                .background(Color.Black.copy(alpha = 0.56f))
+                .background(SheetScrim)
                 .then(
                     if (open) {
                         Modifier
-                            .semantics { contentDescription = "Close menu" }
+                            .semantics { contentDescription = closeLabel }
                             .clickable(interactionSource = rememberInteraction(), indication = null, onClick = onDismiss)
                     } else {
                         Modifier

@@ -42,7 +42,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
-import app.valen.core.announcement
 import app.valen.host.android.BrowserIdentity
 import app.valen.update.GithubUpdater
 import kotlinx.coroutines.launch
@@ -209,9 +208,6 @@ object ValenRuntime {
             http = http,
             scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
             folder = File(app.filesDir, "updates"),
-            onAnnounce = { state ->
-                announcement(state)?.let { line -> scope.launch { coordinator.confirm(line) } }
-            },
         )
         this.updater = updater
 

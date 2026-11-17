@@ -45,11 +45,20 @@ object Capture {
             asset = app.valen.core.ReleaseAsset("linux-appimage", "Valen-9.9.9-beta.1-x86_64.AppImage", 121_000_000, "0".repeat(64)),
             page = "https://example.invalid/release",
             url = "https://example.invalid/file",
+            // Invented notes in GitHub's generated shape, so the sheet shows a real-looking list.
+            notes = """
+                ## What's Changed
+                * Lyrics keep their place after a seek by @someone in https://github.com/dodo986/valen/pull/41
+                * The equaliser's boost is balanced, and its limiter can be turned off by @someone in https://github.com/dodo986/valen/pull/42
+                * Downloads resume after a dropped connection by @someone in https://github.com/dodo986/valen/pull/43
+
+                **Full Changelog**: https://github.com/dodo986/valen/compare/v9.9.8...v9.9.9-beta.1
+            """.trimIndent(),
         )
         val now = System.currentTimeMillis()
         val state: app.valen.core.UpdateState = when (which) {
             "checking" -> app.valen.core.UpdateState.Checking
-            "available", "told" -> app.valen.core.UpdateState.Available(release)
+            "available", "told", "pour" -> app.valen.core.UpdateState.Available(release)
             "downloading" -> app.valen.core.UpdateState.Downloading(release, 46_000_000, release.asset.size)
             "ready" -> app.valen.core.UpdateState.Ready(release)
             "installed" -> app.valen.core.UpdateState.Installed(release)
@@ -66,7 +75,20 @@ object Capture {
             override val current = ValenBuild.VERSION
             override val route = route
             override val elsewhere = if (route == app.valen.core.UpdateRoute.Tell) "This copy comes from Nix, so it is updated with the flake." else null
-            override val state = kotlinx.coroutines.flow.MutableStateFlow(state)
+            override val state = kotlinx.coroutines.flow.MutableStateFlow(state).also { flow ->
+                // "pour": a download that runs while the sheet is open, then the release is ready.
+                if (which == "pour") {
+                    Thread {
+                        Thread.sleep(2_600)
+                        val total = release.asset.size
+                        for (i in 0..24) {
+                            flow.value = app.valen.core.UpdateState.Downloading(release, total * i / 24, total)
+                            Thread.sleep(110)
+                        }
+                        flow.value = app.valen.core.UpdateState.Ready(release)
+                    }.apply { isDaemon = true }.start()
+                }
+            }
             override fun check() {}
             override fun update() {}
             override fun restart() {}

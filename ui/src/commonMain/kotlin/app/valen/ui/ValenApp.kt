@@ -210,6 +210,7 @@ fun ValenApp(
             LocalSongMenu provides songMenu,
             LocalBrowser provides browser,
             LocalRecap provides recap,
+            app.valen.ui.update.LocalUpdateSheet provides remember { app.valen.ui.update.UpdateSheetState() },
             app.valen.ui.components.LocalWarm provides remember(coordinator) { { t: app.valen.core.Track -> coordinator.warm(t) } },
         ) {
             BoxWithConstraints(
@@ -339,6 +340,15 @@ private fun WideApp(
             coordinator = coordinator,
             playlists = playlists,
             onSound = { nav.open(Route.Sound) },
+            compact = false,
+            start = chrome.start,
+            bottom = chrome.bottom,
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        // A new release: by itself once it is ready, or from Settings → About.
+        app.valen.ui.update.UpdateSheetHost(
+            coordinator = coordinator,
             compact = false,
             start = chrome.start,
             bottom = chrome.bottom,
@@ -513,6 +523,7 @@ private fun PhoneApp(
 
         // The song menu over everything, sheets included.
         SongMenuHost(coordinator = coordinator, playlists = playlists, onSound = { nav.open(Route.Sound) }, compact = true, modifier = Modifier.fillMaxSize())
+        app.valen.ui.update.UpdateSheetHost(coordinator = coordinator, compact = true, modifier = Modifier.fillMaxSize())
     }
 }
 

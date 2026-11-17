@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -43,6 +44,8 @@ fun PrimaryButton(
     enabled: Boolean = true,
     icon: ImageVector? = null,
     small: Boolean = false,
+    /** The pill spans the width it is given (a sheet's stacked actions), its label centred. */
+    stretch: Boolean = false,
 ) {
     PillButton(
         label = label,
@@ -51,6 +54,7 @@ fun PrimaryButton(
         enabled = enabled,
         icon = icon,
         small = small,
+        stretch = stretch,
         rest = ValenColors.Primary,
         lifted = ValenColors.Primary.copy(alpha = 0.86f),
         content = ValenColors.OnPrimary,
@@ -67,6 +71,7 @@ fun QuietButton(
     icon: ImageVector? = null,
     small: Boolean = false,
     contentColor: Color = ValenColors.Text,
+    stretch: Boolean = false,
 ) {
     PillButton(
         label = label,
@@ -75,6 +80,7 @@ fun QuietButton(
         enabled = enabled,
         icon = icon,
         small = small,
+        stretch = stretch,
         rest = ValenColors.Container.copy(alpha = 0.7f),
         lifted = ValenColors.Container,
         content = contentColor,
@@ -93,6 +99,7 @@ private fun PillButton(
     enabled: Boolean,
     icon: ImageVector?,
     small: Boolean,
+    stretch: Boolean,
     rest: Color,
     lifted: Color,
     content: Color,
@@ -127,6 +134,7 @@ private fun PillButton(
             horizontalArrangement = Arrangement.spacedBy(Space.step2, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
+                .then(if (stretch) Modifier.fillMaxWidth() else Modifier)
                 .height(if (small) 34.dp else Layout.hitTarget)
                 .clip(Radii.pillShape)
                 .background(fill)

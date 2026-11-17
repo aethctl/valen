@@ -165,14 +165,10 @@ internal fun updatesFolder(): File {
 internal class DesktopUpdater(val updates: app.valen.update.GithubUpdater) {
     private var coordinator: app.valen.core.PlaybackCoordinator? = null
 
-    /** Follows Settings → About, and says once when a release is ready. */
+    /** Follows Settings → About. A ready release is shown by the UI's update sheet. */
     fun follow(coordinator: app.valen.core.PlaybackCoordinator) {
         this.coordinator = coordinator
         updates.start(coordinator.settings.map { it.updates })
-    }
-
-    fun announce(state: app.valen.core.UpdateState) {
-        app.valen.core.announcement(state)?.let { line -> coordinator?.confirm(line) }
     }
 }
 
@@ -181,7 +177,6 @@ internal fun desktopUpdater(scope: kotlinx.coroutines.CoroutineScope, quit: () -
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
-    var holder: DesktopUpdater? = null
     val updates = app.valen.update.GithubUpdater(
         current = ValenBuild.VERSION,
         repo = System.getenv("VALEN_UPDATE_REPO")?.takeIf { it.contains('/') } ?: ValenBuild.UPDATE_REPO,
@@ -189,7 +184,6 @@ internal fun desktopUpdater(scope: kotlinx.coroutines.CoroutineScope, quit: () -
         http = http,
         scope = scope,
         folder = updatesFolder(),
-        onAnnounce = { state -> holder?.announce(state) },
     )
-    return DesktopUpdater(updates).also { holder = it }
+    return DesktopUpdater(updates)
 }
