@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# A release, from a tag: `git tag v1.0.0-alpha.3 && git push valen v1.0.0-alpha.3`.
+#
+# Builds the APK, the AppImage and the .deb at the tag's version, writes valen-release.json (what
+# Valen's updater reads: each file's platform, size and SHA-256, the APK's signer) and publishes
+# them as a GitHub release. The release is made as a draft and shown only once every file is on it,
+# so the updater never sees half a release. A tag with -alpha/-beta/-rc is a pre-release, offered
+# only to those who take test builds.
+#
+# Secrets (Settings → Secrets and variables → Actions), see RELEASING.md:
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD (required)
+#   LYPRIO_BASE_URL, LYPRIO_HMAC_KEY (optional; without them the builds ask LRCLIB alone)
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing tag to release again (vMAJOR.MINOR.PATCH[-alpha|beta|rc.N])"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      VALEN_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Version from the tag
+        run: |
+          v="${TAG#v}"
+          if ! [[ "$v" =~ ^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}(-(alpha|beta|rc)(\.[0-9]{1,2})?)?$ ]]; then
+            echo "::error::$TAG is not vMAJOR.MINOR.PATCH[-alpha|beta|rc[.N]]"
+            exit 1
+          fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Version number
+        run: |
+          line=$(./gradlew -q --no-daemon -Pvalen.version="$VERSION" printVersion | tail -n1)
+          [ "${line%% *}" = "$VERSION" ] || { echo "::error::Gradle made '$line' from $VERSION"; exit 1; }
+          echo "CODE=${line##* }" >> "$GITHUB_ENV"
+
+      - name: Android SDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null || true
+          # AGP fetches a missing platform by itself; asking first only saves it the trouble.
+          "$sdkmanager" "build-tools;37.0.0" > /dev/null || true
+          "$sdkmanager" "platforms;android-37.0" > /dev/null || "$sdkmanager" "platforms;android-37" > /dev/null || true
+
+      - name: Signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set. An APK signed with another key cannot update Valen on a phone; see RELEASING.md."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/valen.keystore"
+          echo "VALEN_KEYSTORE=$RUNNER_TEMP/valen.keystore" >> "$GITHUB_ENV"
+
+      - name: Test and build
+        env:
+          VALEN_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          VALEN_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          VALEN_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          LYPRIO_BASE_URL: ${{ secrets.LYPRIO_BASE_URL }}
+          LYPRIO_HMAC_KEY: ${{ secrets.LYPRIO_HMAC_KEY }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq fakeroot > /dev/null
+          ./gradlew --no-daemon -Pvalen.version="$VERSION" \
+            :core:jvmTest :libs:update:test \
+            :app-android:assembleRelease :app-desktop:packageAppImage :app-desktop:packageDeb
+
+      - name: AppImage
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/bin/appimagetool"
+          # No FUSE on the runner: the tool unpacks itself instead of mounting.
+          PATH="$RUNNER_TEMP/bin:$PATH" APPIMAGE_EXTRACT_AND_RUN=1 VALEN_VERSION="$VERSION" scripts/appimage.sh
+
+      - name: Release files and manifest
+        run: scripts/release-files.sh "$VERSION" "$CODE" "$RUNNER_TEMP/release"
+
+      - name: Publish
+        run: |
+          dir="$RUNNER_TEMP/release"
+          pre=""
+          [[ "$VERSION" == *-* ]] && pre="--prerelease"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # Released again: the manifest goes last, so the files it names are there first.
+            gh release upload "$TAG" --clobber "$dir"/Valen-*
+            gh release upload "$TAG" --clobber "$dir/valen-release.json"
+          else
+            gh release create "$TAG" --draft --verify-tag $pre \
+              --title "Valen $VERSION" --generate-notes \
+              "$dir"/Valen-* "$dir/valen-release.json"
+            gh release edit "$TAG" --draft=false
+          fi

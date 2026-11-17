@@ -633,7 +633,7 @@ private fun Screen(
             onAbout = { onRoute(Route.About) },
             onCleared = { onRoute(Route.Home) },
         )
-        Route.About -> AboutScreen()
+        Route.About -> AboutScreen(version = coordinator.version)
         Route.Artist -> BrowseScreen(coordinator = coordinator, playlists = playlists)
         Route.Sound -> SoundScreen(coordinator = coordinator, playlists = playlists, onClose = onClose ?: { onRoute(Route.NowPlaying) })
         Route.Profile -> ProfileScreen(coordinator = coordinator)

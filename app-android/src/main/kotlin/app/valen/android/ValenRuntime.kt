@@ -41,6 +41,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import app.valen.core.announcement
+import app.valen.host.android.BrowserIdentity
+import app.valen.update.GithubUpdater
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import app.valen.core.LyricsBook
@@ -70,7 +74,16 @@ object ValenRuntime {
     lateinit var playlists: PlaylistManager
         private set
 
-    lateinit var webPlayer: WebPlayerHost
+    /**
+     * Spotify's Web Player page, when this build has Spotify. Frozen on Android for now
+     * (`valen.android.spotify` in gradle.properties): no page, no sign-in, no adapter, so the app
+     * lists YouTube Music and SoundCloud alone and a Spotify song plays from another service.
+     */
+    var webPlayer: WebPlayerHost? = null
+        private set
+
+    /** Updates from Valen's GitHub releases; the install receiver reports back to it. */
+    var updater: GithubUpdater? = null
         private set
 
     /** Playlists downloaded to the phone (`Music/Valen`); null when that could not be set up. */
@@ -103,29 +116,24 @@ object ValenRuntime {
             write = { text -> runCatching { File(app.filesDir, "settings.json").writeText(text) } },
         )
 
-        webPlayer = WebPlayerHost(app)
+        val identity = BrowserIdentity.of(app)
         val ytmHost = HiddenPageHost(
             app, "valen-ytmusic",
-            AndroidSignIn.YTM_ORIGIN, AndroidSignIn.YTM_SESSION_URLS, webPlayer.identity,
+            AndroidSignIn.YTM_ORIGIN, AndroidSignIn.YTM_SESSION_URLS, identity,
         )
         val scHost = HiddenPageHost(
             app, "valen-soundcloud",
-            AndroidSignIn.SC_ORIGIN, AndroidSignIn.SC_SESSION_URLS, webPlayer.identity,
+            AndroidSignIn.SC_ORIGIN, AndroidSignIn.SC_SESSION_URLS, identity,
         )
         hidden[ProviderId.YOUTUBE_MUSIC] = ytmHost
         hidden[ProviderId.SOUNDCLOUD] = scHost
 
-        val spotifySignIn = AndroidSignIn.spotify(webPlayer, scope)
         val ytmSignIn = AndroidSignIn.ytmusic(ytmHost, scope)
         val scSignIn = AndroidSignIn.soundcloud(scHost, scope)
-        signIns[ProviderId.SPOTIFY] = spotifySignIn
         signIns[ProviderId.YOUTUBE_MUSIC] = ytmSignIn
         signIns[ProviderId.SOUNDCLOUD] = scSignIn
 
-        val spotify = SpotifyProvider(webPlayer, spotifySignIn, scope, http, wake = { webPlayer.ensureLoaded() })
-        // The vendored API injects the page script after each load; the host says when.
-        webPlayer.onPageLoaded = { scope.launch { runCatching { spotify.api.onPageLoaded() } } }
-        webPlayer.onPageStarting = { runCatching { spotify.api.onPageStarting() } }
+        val spotify = if (BuildConfig.SPOTIFY) spotify(app, http) else null
 
         // YouTube Music and SoundCloud play natively, as on the desktop: the stream is resolved by
         // the same code (NewPipe's extractor, SoundCloud's API) and played by ExoPlayer, with
@@ -190,7 +198,22 @@ object ValenRuntime {
             musicFolder = AndroidStorage.music(),
             home = AndroidStorage.music().parentFile?.absolutePath ?: "/storage/emulated/0",
         )
-        val providers = listOf(spotify, ytmusic, soundcloud, local)
+        val providers = listOfNotNull(spotify, ytmusic, soundcloud, local)
+
+        // A debug build's name carries "-debug"; the version is the same.
+        val version = BuildConfig.VERSION_NAME.removeSuffix("-debug")
+        val updater = GithubUpdater(
+            current = version,
+            repo = BuildConfig.UPDATE_REPO,
+            installer = ApkInstaller(app),
+            http = http,
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            folder = File(app.filesDir, "updates"),
+            onAnnounce = { state ->
+                announcement(state)?.let { line -> scope.launch { coordinator.confirm(line) } }
+            },
+        )
+        this.updater = updater
 
         coordinator = PlaybackCoordinator(
             providers = providers,
@@ -208,12 +231,15 @@ object ValenRuntime {
                     http,
                     LyricsSetup.lyprio(env = emptyMap(), builtUrl = BuildConfig.LYPRIO_BASE_URL, builtKey = BuildConfig.LYPRIO_HMAC_KEY),
                     // Spotify's own, for a signed-in account whose Web Player is already up.
-                    services = listOf(ServiceLyrics("Spotify", spotify)),
+                    services = listOfNotNull(spotify?.let { ServiceLyrics("Spotify", it) }),
                 ),
                 DiskLyricsStore(File(app.cacheDir, "lyrics").toPath()),
             ),
             offline = shelf,
+            version = version,
+            updates = updater,
         )
+        updater.start(coordinator.settings.map { it.updates })
         val library = PlaylistLibrary(
             PlaylistStore(
                 read = { File(app.filesDir, "playlists.json").takeIf { it.isFile }?.readText() },
@@ -270,7 +296,7 @@ object ValenRuntime {
         // A debug build writes what the app says to the user (failures included) to logcat.
         if (app.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             // The Web Player bridge's own lines: each call, its answer or failure, refusals.
-            spotify.api.bridge.logger = { line -> android.util.Log.d("ValenSpotify", line) }
+            spotify?.api?.bridge?.logger = { line -> android.util.Log.d("ValenSpotify", line) }
             scope.launch { coordinator.notice.collect { if (it != null) android.util.Log.i("ValenNotice", it) } }
         }
         scope.launch {
@@ -290,10 +316,27 @@ object ValenRuntime {
         // The Web Player loads once an account is signed in (its sign-in check reads cookies, it
         // needs no page), a little after start so the app's first screen comes first. Signed out,
         // it loads only if a Spotify search or play asks for it.
-        scope.launch {
-            kotlinx.coroutines.delay(WEB_PLAYER_DELAY_MS)
-            spotifySignIn.state.collect { if (it is SessionState.Connected) webPlayer.ensureLoaded() }
+        val page = webPlayer
+        val spotifySignIn = signIns[ProviderId.SPOTIFY]
+        if (page != null && spotifySignIn != null) {
+            scope.launch {
+                kotlinx.coroutines.delay(WEB_PLAYER_DELAY_MS)
+                spotifySignIn.state.collect { if (it is SessionState.Connected) page.ensureLoaded() }
+            }
         }
+    }
+
+    /** Spotify's page, its sign-in and its adapter, for a build that has Spotify. */
+    private fun spotify(app: Context, http: OkHttpClient): SpotifyProvider {
+        val page = WebPlayerHost(app)
+        webPlayer = page
+        val signIn = AndroidSignIn.spotify(page, scope)
+        signIns[ProviderId.SPOTIFY] = signIn
+        val spotify = SpotifyProvider(page, signIn, scope, http, wake = { page.ensureLoaded() })
+        // The vendored API injects the page script after each load; the host says when.
+        page.onPageLoaded = { scope.launch { runCatching { spotify.api.onPageLoaded() } } }
+        page.onPageStarting = { runCatching { spotify.api.onPageStarting() } }
+        return spotify
     }
 
     /**
@@ -303,7 +346,7 @@ object ValenRuntime {
      */
     fun attachHidden(container: ViewGroup) {
         if (!started) return
-        runCatching { webPlayer.attach(container, visible = false) }
+        webPlayer?.let { page -> runCatching { page.attach(container, visible = false) } }
         hidden.values.forEach { runCatching { it.attach(container) } }
     }
 
@@ -313,7 +356,7 @@ object ValenRuntime {
      */
     fun detachHidden(container: ViewGroup) {
         if (!started) return
-        runCatching { webPlayer.detach(container) }
+        webPlayer?.let { page -> runCatching { page.detach(container) } }
         hidden.values.forEach { runCatching { it.detach(container) } }
     }
 

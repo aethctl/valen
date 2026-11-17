@@ -18,6 +18,8 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
+    <!-- Updates from Valen's GitHub releases are handed to the system's installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:name=".ValenApplication"
@@ -49,6 +51,11 @@
             android:name="app.valen.host.android.PlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- What the system's installer says about an update Valen handed it. -->
+        <receiver
+            android:name=".UpdateReceiver"
+            android:exported="false" />
 
         <!-- A playlist download, while one runs. -->
         <service

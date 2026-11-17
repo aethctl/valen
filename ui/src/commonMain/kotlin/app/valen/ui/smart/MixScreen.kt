@@ -198,6 +198,8 @@ fun MixScreen(
                     Column {
                         Label("Build from")
                         SourceTiles(
+                            // "Spotify follows" only where this build has Spotify at all.
+                            shown = { it != SmartSource.SpotifyFollows || ProviderId.SPOTIFY in coordinator.services },
                             selected = { it in sources },
                             enabled = { it != SmartSource.SpotifyFollows || spotify },
                             onToggle = { if (it in sources) sources.remove(it) else sources.add(it) },
@@ -309,9 +311,14 @@ private fun NameField(name: String, onName: (String) -> Unit) {
 /** The five sources as tiles: icon, name, one line; chosen ones fill with the one colour. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SourceTiles(selected: (SmartSource) -> Boolean, enabled: (SmartSource) -> Boolean, onToggle: (SmartSource) -> Unit) {
+private fun SourceTiles(
+    shown: (SmartSource) -> Boolean,
+    selected: (SmartSource) -> Boolean,
+    enabled: (SmartSource) -> Boolean,
+    onToggle: (SmartSource) -> Unit,
+) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.step2), verticalArrangement = Arrangement.spacedBy(Space.step2)) {
-        Sources.forEachIndexed { i, info ->
+        Sources.filter { shown(it.source) }.forEachIndexed { i, info ->
             val on = selected(info.source)
             val usable = enabled(info.source)
             val fill by animateColorAsState(if (on) ValenColors.Container else ValenColors.Surface, Motion.standard(), label = "sourceFill")

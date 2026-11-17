@@ -345,7 +345,7 @@ private fun BasicsStep(coordinator: PlaybackCoordinator, onConnect: (ProviderId)
     val settings by coordinator.settings.collectAsState()
     Title("Almost done", "Connect what you use. YouTube Music and SoundCloud work without an account.")
     Column(verticalArrangement = Arrangement.spacedBy(Space.step2), modifier = Modifier.fillMaxWidth()) {
-        ProviderId.services.forEachIndexed { i, provider ->
+        coordinator.services.forEachIndexed { i, provider ->
             ServiceTile(
                 provider = provider,
                 state = sessions[provider] ?: SessionState.SignedOut,

@@ -75,7 +75,7 @@ private fun githubAvatar(): String = "$GitHub.png?size=320&d=${System.currentTim
  * GitHub picture, read live.
  */
 @Composable
-fun AboutScreen(modifier: Modifier = Modifier) {
+fun AboutScreen(modifier: Modifier = Modifier, version: String = "") {
     val uri = LocalUriHandler.current
     ScrollPage(key = "about", modifier = modifier.fillMaxSize()) {
         PageTop()
@@ -87,7 +87,7 @@ fun AboutScreen(modifier: Modifier = Modifier) {
                 underline = ValenColors.Primary,
             )
             Spacer(Modifier.height(Space.step2))
-            Text("Valen 1.0.0 · GPL-3.0", style = MaterialTheme.typography.bodyMedium, color = ValenColors.Text2, modifier = Modifier.arrive(1))
+            Text("Valen $version · GPL-3.0", style = MaterialTheme.typography.bodyMedium, color = ValenColors.Text2, modifier = Modifier.arrive(1))
             Spacer(Modifier.height(Space.step8))
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val side = maxWidth >= 820.dp

@@ -16,7 +16,18 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.fadeIn
+import app.valen.core.UpdatePrefs
+import app.valen.core.UpdateRoute
+import app.valen.core.UpdateState
+import app.valen.core.Updates
+import app.valen.core.ValenVersion
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloatAsState
+import app.valen.ui.components.ProgressRail
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -375,13 +386,14 @@ private fun PartSummary(part: SettingsPart, coordinator: PlaybackCoordinator, co
     val line = when (part) {
         SettingsPart.Services -> {
             val sessions by coordinator.sessions.collectAsState()
-            val signed = ProviderId.services.count { sessions[it] is SessionState.Connected }
+            val services = coordinator.services
+            val signed = services.count { sessions[it] is SessionState.Connected }
             val first = coordinator.priorityOrder(settings.priority).firstOrNull { it.isService }
             listOfNotNull(
                 when (signed) {
                     0 -> "None signed in"
-                    ProviderId.services.size -> "All signed in"
-                    else -> "$signed of ${ProviderId.services.size} signed in"
+                    services.size -> "All signed in"
+                    else -> "$signed of ${services.size} signed in"
                 },
                 first?.let { "${it.label} first" },
             ).joinToString(" · ")
@@ -406,7 +418,10 @@ private fun PartSummary(part: SettingsPart, coordinator: PlaybackCoordinator, co
                 else -> "On"
             }
         }
-        SettingsPart.About -> "Valen 1.0.0 · your data"
+        SettingsPart.About -> {
+            val update = coordinator.updates?.state?.collectAsState()?.value
+            updateSummary(update) ?: "Valen ${coordinator.version} · your data"
+        }
         SettingsPart.Test -> if (settings.recapAlways) "Your week on Home always" else "For trying things out"
     }
     Text(line, style = MaterialTheme.typography.bodySmall, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -439,7 +454,7 @@ private fun ServicesPart(coordinator: PlaybackCoordinator) {
     val settings by coordinator.settings.collectAsState()
     Note("Sign-in opens the service's own page. Valen never sees your password and never asks for it.", Modifier.arrive(1))
     Group(
-        ProviderId.services.map { provider ->
+        coordinator.services.map { provider ->
             {
                 ServiceTile(
                     provider = provider,
@@ -715,7 +730,7 @@ private fun AboutPart(
     Spacer(Modifier.height(Space.step2))
     Group(
         listOf(
-            { AboutRow("Version", "1.0.0") },
+            { AboutRow("Version", coordinator.version) },
             { AboutRow("Licence", "GPL-3.0") },
             { AboutRow("Playback built on", "Orpheon") },
             { AboutRow("Interface after", "Mochy Music, Orpheon") },
@@ -725,10 +740,16 @@ private fun AboutPart(
     Spacer(Modifier.height(Space.step3))
     QuietButton(label = "Who made Valen", icon = Icons.Rounded.Info, onClick = onAbout, modifier = Modifier.arrive(2))
 
+    coordinator.updates?.let { updates ->
+        Spacer(Modifier.height(Space.step8))
+        SectionHeader(title = "Updates", modifier = Modifier.arrive(3, ItemArrival.Swing))
+        UpdatesGroup(updates, settings.updates, onChange = coordinator::setUpdates, modifier = Modifier.arrive(4))
+    }
+
     Spacer(Modifier.height(Space.step8))
-    SectionHeader(title = "Your data", modifier = Modifier.arrive(3, ItemArrival.Swing))
-    Note("Playlists, listening, pictures and settings are kept on this device.", Modifier.arrive(4))
-    Box(Modifier.arrive(5)) {
+    SectionHeader(title = "Your data", modifier = Modifier.arrive(5, ItemArrival.Swing))
+    Note("Playlists, listening, pictures and settings are kept on this device.", Modifier.arrive(6))
+    Box(Modifier.arrive(7)) {
         ClearData(
             onClear = {
                 scope.launch {
@@ -745,6 +766,148 @@ private fun AboutPart(
         )
     }
 }
+
+/** The About part's line in the index while an update is under way; null when there is none to speak of. */
+private fun updateSummary(state: UpdateState?): String? = when (state) {
+    is UpdateState.Available -> "Valen ${state.release.version} is out"
+    is UpdateState.Downloading -> "Downloading Valen ${state.release.version}"
+    is UpdateState.Ready -> "Valen ${state.release.version} is ready to install"
+    is UpdateState.Installing -> "Installing Valen ${state.release.version}"
+    is UpdateState.Installed -> "Valen ${state.release.version} opens next time"
+    else -> null
+}
+
+/**
+ * Updates from Valen's GitHub releases: where they stand, with the one press that moves them on,
+ * then the two choices (looking by itself, test builds). The row's words change in place, as the
+ * notebook's do: the old line fades as the new one rises, and a download fills a rail under them.
+ */
+@Composable
+private fun UpdatesGroup(updates: Updates, prefs: UpdatePrefs, onChange: ((UpdatePrefs) -> UpdatePrefs) -> Unit, modifier: Modifier = Modifier) {
+    val state by updates.state.collectAsState()
+    val current = remember(updates) { ValenVersion.parse(updates.current) }
+    Group(
+        listOf(
+            { UpdateRow(updates, state) },
+            {
+                SwitchRow(
+                    title = "Update by itself",
+                    body = when (updates.route) {
+                        UpdateRoute.Itself -> "Looks on GitHub a few times a day and puts a new version in place for the next start."
+                        UpdateRoute.System -> "Looks on GitHub a few times a day and downloads a new version off mobile data. Installing takes one press."
+                        UpdateRoute.Tell -> "Looks on GitHub a few times a day and says when a new version is out."
+                    },
+                    checked = prefs.check,
+                    onChange = { on -> onChange { it.copy(check = on) } },
+                )
+            },
+            {
+                SwitchRow(
+                    title = "Test builds",
+                    body = "Early versions, before they are a release. They can break.",
+                    checked = prefs.takesTestBuilds(current),
+                    onChange = { on -> onChange { it.copy(testBuilds = on) } },
+                )
+            },
+        ),
+        modifier = modifier,
+    )
+}
+
+/** Where the update stands, in a title and a line, with the press that moves it on. */
+@Composable
+private fun UpdateRow(updates: Updates, state: UpdateState) {
+    val reduced = LocalReducedMotion.current
+    val words = updateWords(updates, state)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 72.dp)
+            .padding(horizontal = Space.step4, vertical = Space.step3),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AnimatedContent(
+                targetState = words,
+                transitionSpec = {
+                    if (reduced) {
+                        fadeIn(Motion.fade()) togetherWith fadeOut(Motion.fade())
+                    } else {
+                        (fadeIn(Motion.enter()) + slideInVertically(Motion.enter()) { it / 3 }) togetherWith fadeOut(Motion.exit())
+                    }
+                },
+                contentKey = { it.title to it.body },
+                label = "updateWords",
+                modifier = Modifier.weight(1f).padding(end = Space.step4),
+            ) { shown ->
+                Column {
+                    Text(shown.title, style = MaterialTheme.typography.bodyLarge, color = ValenColors.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(shown.body, style = MaterialTheme.typography.bodySmall, color = if (shown.trouble) ValenColors.Danger else ValenColors.Text2)
+                }
+            }
+            UpdateAction(updates, state)
+        }
+        val downloading = state as? UpdateState.Downloading
+        AnimatedVisibility(
+            visible = downloading != null,
+            enter = fadeIn(Motion.enter()) + expandVertically(Motion.enter()),
+            exit = fadeOut(Motion.exit()) + shrinkVertically(Motion.exit()),
+        ) {
+            val fraction by animateFloatAsState(downloading?.fraction ?: 1f, Motion.standard(), label = "updateRail")
+            ProgressRail(fraction = fraction, modifier = Modifier.padding(top = Space.step3))
+        }
+    }
+}
+
+/** The one press an update's state asks for, if any. */
+@Composable
+private fun UpdateAction(updates: Updates, state: UpdateState) {
+    when (state) {
+        is UpdateState.Available ->
+            if (updates.route == UpdateRoute.Tell) QuietButton(label = "Open", small = true, onClick = { updates.openPage(state.release) })
+            else PrimaryButton(label = "Update", small = true, onClick = updates::update)
+        is UpdateState.Ready -> PrimaryButton(label = "Install", small = true, onClick = updates::update)
+        is UpdateState.Installed -> PrimaryButton(label = "Restart", small = true, onClick = updates::restart)
+        is UpdateState.Failed -> QuietButton(label = "Try again", small = true, onClick = if (state.release != null) updates::update else updates::check)
+        UpdateState.Checking, is UpdateState.Downloading, is UpdateState.Installing -> Unit
+        else -> QuietButton(label = "Check", small = true, onClick = updates::check)
+    }
+}
+
+private data class UpdateWords(val title: String, val body: String, val trouble: Boolean = false)
+
+private fun updateWords(updates: Updates, state: UpdateState): UpdateWords = when (state) {
+    UpdateState.Off -> UpdateWords("Not looking", "Valen ${updates.current}. Check looks once.")
+    UpdateState.Idle -> UpdateWords("Valen ${updates.current}", "Looks for a new version shortly")
+    UpdateState.Checking -> UpdateWords("Looking for a new version", "On GitHub")
+    is UpdateState.UpToDate -> UpdateWords("Up to date", "Valen ${updates.current} · looked ${agoText(state.at)}")
+    is UpdateState.Available -> UpdateWords(
+        "Valen ${state.release.version} is out",
+        updates.elsewhere ?: listOfNotNull(if (state.release.test) "Test build" else null, sizeText(state.release.asset.size)).joinToString(" · "),
+    )
+    is UpdateState.Downloading -> UpdateWords("Downloading Valen ${state.release.version}", "${sizeText(state.done)} of ${sizeText(state.total)}")
+    is UpdateState.Ready -> UpdateWords("Valen ${state.release.version} is ready", "Downloaded and checked")
+    is UpdateState.Installing -> UpdateWords("Installing Valen ${state.release.version}", "The system finishes it")
+    is UpdateState.Installed -> UpdateWords("Valen ${state.release.version} is ready", "It opens next time Valen starts")
+    is UpdateState.Failed -> UpdateWords(if (state.release != null) "The update did not finish" else "Could not look for updates", state.reason, trouble = true)
+}
+
+/** "just now", "12 min ago", "3 h ago", "2 days ago". */
+private fun agoText(at: Long): String {
+    val minutes = ((System.currentTimeMillis() - at) / 60_000).coerceAtLeast(0)
+    return when {
+        minutes < 1 -> "just now"
+        minutes < 60 -> "$minutes min ago"
+        minutes < 48 * 60 -> "${minutes / 60} h ago"
+        else -> "${minutes / (24 * 60)} days ago"
+    }
+}
+
+/** A file's size the way people say it: "121 MB", "860 KB". */
+private fun sizeText(bytes: Long): String = when {
+    bytes <= 0 -> ""
+    bytes >= 1_000_000 -> "${(bytes + 500_000) / 1_000_000} MB"
+    else -> "${(bytes + 500) / 1000} KB"
+}.ifEmpty { "0 KB" }
 
 /** Where the link to Discord stands, in one sentence. */
 private fun presenceSentence(status: PresenceStatus, enabled: Boolean): String = when (status) {

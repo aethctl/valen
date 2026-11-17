@@ -45,6 +45,9 @@ Gradle call in a fresh shell.
 | UI click-through tests (fake services, no network, ~1 min) | `./gradlew :ui:jvmTest` |
 | Audio/providers tests | `./gradlew :libs:audio:test :providers:soundcloud:test :host:desktop:test` |
 | Lyrics sources (local server stands in for Lyprio and LRCLIB) | `./gradlew :providers:lyrics:test` |
+| Updater (local server stands in for GitHub) | `./gradlew :libs:update:test` |
+| This build's version and number | `./gradlew -q printVersion` (the version lives in `gradle.properties`, `valen.version`) |
+| A release | push a `v1.2.3[-alpha.N]` tag; `.github/workflows/release.yml`, see `RELEASING.md` |
 | Android compile check | `./gradlew :app-android:compileDebugKotlin` |
 | Android emulator (see §5) | `source scripts/env.sh; ANDROID_AVD_HOME=$PWD/.tools/avd $ANDROID_HOME/emulator/emulator -avd valen-test -no-window -no-boot-anim -gpu host -no-snapshot` |
 | APK for development | `./gradlew :app-android:assembleDebug` (`app.valen.debug`; debuggable, slow — never judge lag on it) |
@@ -94,6 +97,7 @@ valen [--width N] [--height N] [--route home|search|playlists|import|now-playing
 | `VALEN_CAPTURE_RECAP=N` | `--screenshot` only: open "Your week" on page N (0 is the first) a moment in, so it pours in |
 | `VALEN_CAPTURE_RECAP_TURN=1` | `--screenshot` only: turn the story to its next page halfway (with `VALEN_CAPTURE_FRAMES`, to see the slap) |
 | `VALEN_CAPTURE_SETTINGS=PART` | `--screenshot --route settings`: open that part of Settings (`services`, `playback`, `look`, `week`, `downloads`, `discord`, `about`, `test`) |
+| `VALEN_CAPTURE_UPDATE=STATE` | `--screenshot` only: Settings → About shows that update state (`uptodate`, `checking`, `available`, `downloading`, `ready`, `installed`, `failed`, `told`, `off`) of an invented 9.9.9-beta.1; GitHub is not asked. Unset, a screenshot has no updater |
 | `VALEN_CAPTURE_IDLE=1` | `--screenshot` only: after the settle, print how many of 20 more frames still ask to be redrawn (a redraw loop shows as 20 of 20) |
 | `VALEN_FFPLAY_BIN` | ffplay used for native playback |
 | `VALEN_CHROME_BIN` | Chrome/Chromium for Spotify |
@@ -106,6 +110,7 @@ valen [--width N] [--height N] [--route home|search|playlists|import|now-playing
 | `VALEN_FFPROBE_BIN`, `VALEN_FFMPEG_BIN` | FFmpeg's tools for local tags/covers and for tagging downloads |
 | `VALEN_DISCORD_APP_ID` | a Discord application of one's own, instead of Valen's built-in id |
 | `VALEN_HOMEPAGE` | an `https://` page for the card's "Get Valen" button (default <https://github.com/dodo986/valen>) |
+| `VALEN_UPDATE_REPO` | `owner/name` whose GitHub releases are the updates (default `dodo986/valen`; also a build property) |
 | `VALEN_LYPRIO_URL`, `VALEN_LYPRIO_KEY` | Lyprio's address and signing key (also `LYPRIO_BASE_URL`/`LYPRIO_HMAC_KEY`, or `$XDG_CONFIG_HOME/valen/lyprio.json`); unset means LRCLIB only |
 
 ---
@@ -148,6 +153,10 @@ providers/lyrics LyprioLyrics (signed, protocol 2 → 1), LrclibLyrics, LyricsSe
                  address and key come from), DiskLyricsStore; a JVM library both apps use
 providers/ytmusic,soundcloud   the older page-based adapters (hidden WebView); no app builds them
                  now, kept with their page scripts and tests
+libs/update/     GithubUpdater (look with ETags, pick the newest release that fits, download with
+                 resume, SHA-256 check, hand to the platform's UpdateInstaller); app-desktop's
+                 DesktopInstaller (AppImage swap, .deb, Nix/source told) and app-android's
+                 ApkInstaller + UpdateReceiver (PackageInstaller session)
 host/desktop     ChromeLauncher, CdpHost/CdpPageHost, DesktopHosts, desktop sign-ins, MPRIS,
                  DiscordIpc + DiscordPresence (the "Listening to Valen" card over Discord's socket)
 host/android     ExoAudioPlayer (Android sink, effects inside), ExoStreamCache (ExoPlayer's song
@@ -160,6 +169,24 @@ packaging/       desktop entry, icon, packaging notes
 ```
 
 Key invariants:
+
+- **Spotify is frozen on Android.** `valen.android.spotify=false` (gradle.properties →
+  `BuildConfig.SPOTIFY`) means `ValenRuntime` makes no Web Player, no Spotify sign-in and no adapter.
+  The UI lists `coordinator.services` (the services the build has), never `ProviderId.services`, so
+  nothing offers Spotify there. A saved Spotify song plays from another service's copy of the same
+  recording. Setting the property to true brings it all back unchanged.
+- **Updates come only from a release's manifest, and nothing unverified is installed.** The version
+  lives in `gradle.properties` (`valen.version`); the root build makes its number
+  (`ValenVersion.code`, also Android's `versionCode`) and both must stay in step (`ValenVersionTest`).
+  `GithubUpdater` takes a release only when its tag is a newer version and its
+  `valen-release.json` names the same version and number and a file for this platform. The file is
+  handed to the installer only when its size and SHA-256 match. Looks use ETags, so a 304 costs no
+  rate limit, and a 403/429 is waited out. One piece of work at a time. The AppImage is replaced by
+  a rename in its own folder (never a half-written file under its name); Restart waits for this
+  process to exit before starting the new one (one Valen at a time). Android checks package, number
+  and signer before `PackageInstaller`, and downloads by itself only off metered networks. Nix,
+  source builds and the debug app are only told. A release is announced once per version
+  (`announcement`, a confirmation that leaves by itself).
 
 - **The queue is Valen's.** Adapters play exactly one track. `PlaybackCoordinator` owns
   queue/index/now-playing and is the only thing the UI talks to. Never let an adapter invent a queue.

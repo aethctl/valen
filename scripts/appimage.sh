@@ -8,14 +8,18 @@
 # type, and the Compose Gradle plugin does not wrap it. appimagetool does.
 #
 #   scripts/appimage.sh
-#   -> app-desktop/build/compose/binaries/main/app/Valen-1.0.0-x86_64.AppImage
+#   -> app-desktop/build/compose/binaries/main/app/Valen-<version>-x86_64.AppImage
+#
+# The version is $VALEN_VERSION when given (the release workflow passes the tag's), else
+# gradle.properties' valen.version: the same one the build put inside the app.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 appdir="$root/build/appimage/Valen.AppDir"
 image="$root/app-desktop/build/compose/binaries/main/app/Valen"
-out="$root/app-desktop/build/compose/binaries/main/app/Valen-1.0.0-x86_64.AppImage"
-version=$(sed -n 's/^[[:space:]]*packageVersion = "\(.*\)"/\1/p' "$root/app-desktop/build.gradle.kts")
+version="${VALEN_VERSION:-$(sed -n 's/^valen\.version=\(.*\)$/\1/p' "$root/gradle.properties")}"
+[ -n "$version" ] || { echo "no version: set VALEN_VERSION or valen.version in gradle.properties" >&2; exit 1; }
+out="$root/app-desktop/build/compose/binaries/main/app/Valen-$version-x86_64.AppImage"
 
 command -v appimagetool >/dev/null || {
   echo "appimagetool is not installed" >&2

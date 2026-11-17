@@ -71,6 +71,10 @@ class PlaybackCoordinator(
     val offline: OfflineShelf? = null,
     /** The link to Discord that shows what plays; null where there is none (Android, tests). */
     val presence: PresenceLink? = null,
+    /** This build's version, as Settings and About name it. */
+    val version: String = "dev",
+    /** New releases from GitHub, and installing them; null where there are none (tests). */
+    val updates: Updates? = null,
 ) {
     /** The playlist the current queue was started from, for the stats; null for anything else. */
     private var playingFrom: String? = null
@@ -247,6 +251,12 @@ class PlaybackCoordinator(
     }
 
     fun provider(id: ProviderId): MusicProvider? = byId[id]
+
+    /**
+     * The streaming services this build has, in their usual order: what sign-ins, the welcome and
+     * Settings list. Android leaves Spotify out for now, so it is not offered there at all.
+     */
+    val services: List<ProviderId> = ProviderId.services.filter { it in byId }
 
     suspend fun connect(id: ProviderId) {
         runCatching { byId[id]?.connect() }.onFailure { say(it.message ?: "Could not connect") }
@@ -434,11 +444,16 @@ class PlaybackCoordinator(
         // "up next", and nothing playing.
         if (!canPlayNow(track)) {
             val copy = playableCopy(track)
+            // A service this build does not have (Spotify on Android, for now) is not "signed out".
+            val absent = track.provider !in byId
             if (copy == null) {
-                say("Sign in to ${track.provider.label} to play this")
+                say(if (absent) "${track.provider.label} is not in this version of Valen, and no other service has this song" else "Sign in to ${track.provider.label} to play this")
                 return
             }
-            confirm("${track.provider.label} is signed out, so this plays from ${copy.provider.label}")
+            confirm(
+                if (absent) "This plays from ${copy.provider.label}"
+                else "${track.provider.label} is signed out, so this plays from ${copy.provider.label}",
+            )
             play(copy, context.map { if (it.key == track.key) copy else it }, from)
             return
         }
@@ -1048,6 +1063,9 @@ class PlaybackCoordinator(
 
     /** Whether sung words and lines move (rise, ripple, pour), or simply light up. */
     fun setLyricsMotion(on: Boolean) = updateSettings { it.copy(lyricsMotion = on) }
+
+    /** Whether Valen looks for updates, and takes test builds. */
+    fun setUpdates(change: (UpdatePrefs) -> UpdatePrefs) = updateSettings { it.copy(updates = change(it.updates)) }
 
     /** Discord's card: any change to it (on, the application id, what it shows). */
     fun setPresence(change: (PresenceSettings) -> PresenceSettings) =

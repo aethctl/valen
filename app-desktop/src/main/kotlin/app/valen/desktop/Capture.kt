@@ -31,6 +31,49 @@ import java.nio.file.Path
  */
 object Capture {
 
+    /**
+     * VALEN_CAPTURE_UPDATE=uptodate|checking|available|downloading|ready|installed|failed|told|off:
+     * Settings → About shows that state of an update to an invented 9.9.9-beta.1, with nothing asked
+     * of GitHub. Unset: no updater at all, so a screenshot never looks.
+     */
+    fun updates(): app.valen.core.Updates? {
+        val which = System.getenv("VALEN_CAPTURE_UPDATE")?.lowercase() ?: return null
+        val release = app.valen.core.AppRelease(
+            version = "9.9.9-beta.1",
+            code = app.valen.core.ValenVersion.parse("9.9.9-beta.1")!!.code,
+            test = true,
+            asset = app.valen.core.ReleaseAsset("linux-appimage", "Valen-9.9.9-beta.1-x86_64.AppImage", 121_000_000, "0".repeat(64)),
+            page = "https://example.invalid/release",
+            url = "https://example.invalid/file",
+        )
+        val now = System.currentTimeMillis()
+        val state: app.valen.core.UpdateState = when (which) {
+            "checking" -> app.valen.core.UpdateState.Checking
+            "available", "told" -> app.valen.core.UpdateState.Available(release)
+            "downloading" -> app.valen.core.UpdateState.Downloading(release, 46_000_000, release.asset.size)
+            "ready" -> app.valen.core.UpdateState.Ready(release)
+            "installed" -> app.valen.core.UpdateState.Installed(release)
+            "failed" -> app.valen.core.UpdateState.Failed("Could not reach GitHub", release)
+            "off" -> app.valen.core.UpdateState.Off
+            else -> app.valen.core.UpdateState.UpToDate(now - 25 * 60_000)
+        }
+        val route = when (which) {
+            "told" -> app.valen.core.UpdateRoute.Tell
+            "ready" -> app.valen.core.UpdateRoute.System
+            else -> app.valen.core.UpdateRoute.Itself
+        }
+        return object : app.valen.core.Updates {
+            override val current = ValenBuild.VERSION
+            override val route = route
+            override val elsewhere = if (route == app.valen.core.UpdateRoute.Tell) "This copy comes from Nix, so it is updated with the flake." else null
+            override val state = kotlinx.coroutines.flow.MutableStateFlow(state)
+            override fun check() {}
+            override fun update() {}
+            override fun restart() {}
+            override fun openPage(release: app.valen.core.AppRelease) {}
+        }
+    }
+
     @OptIn(ExperimentalComposeUiApi::class)
     fun render(
         coordinator: PlaybackCoordinator,

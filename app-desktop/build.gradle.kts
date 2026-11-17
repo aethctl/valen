@@ -47,12 +47,45 @@ val generateLyprioConfig = tasks.register("generateLyprioConfig") {
 
 kotlin.sourceSets["main"].kotlin.srcDir(generateLyprioConfig)
 
+// The version this build is, and where its updates come from (VALEN_UPDATE_REPO overrides the
+// repository, for a fork's own releases).
+val valenVersion = rootProject.extra["valenVersion"] as String
+val valenVersionCode = rootProject.extra["valenVersionCode"] as Int
+val generateBuildInfo = tasks.register("generateBuildInfo") {
+    val repo = lyprioSetting("VALEN_UPDATE_REPO").ifEmpty { "dodo986/valen" }
+    inputs.property("version", valenVersion)
+    inputs.property("code", valenVersionCode)
+    inputs.property("repo", repo)
+    val out = layout.buildDirectory.dir("generated/buildinfo/kotlin")
+    outputs.dir(out)
+    doLast {
+        val file = out.get().file("app/valen/desktop/ValenBuild.kt").asFile
+        file.parentFile.mkdirs()
+        file.writeText(
+            """
+            /* SPDX-License-Identifier: GPL-3.0-only */
+            package app.valen.desktop
+
+            /** What this build is: its version, the number updates are compared by, where they come from. */
+            internal object ValenBuild {
+                const val VERSION = ${quoted(valenVersion)}
+                const val CODE = $valenVersionCode
+                const val UPDATE_REPO = ${quoted(repo)}
+            }
+
+            """.trimIndent(),
+        )
+    }
+}
+kotlin.sourceSets["main"].kotlin.srcDir(generateBuildInfo)
+
 dependencies {
     implementation(project(":core"))
     implementation(project(":ui"))
     implementation(project(":providers:spotify"))
     implementation(project(":providers:native"))
     implementation(project(":providers:lyrics"))
+    implementation(project(":libs:update"))
     implementation(project(":libs:audio"))
     implementation(project(":host:desktop"))
     implementation(libs.kotlinx.coroutines.swing)
@@ -95,7 +128,8 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Deb, TargetFormat.AppImage)
             packageName = "Valen"
-            packageVersion = "1.0.0"
+            // jpackage takes numbers only; the full version (a pre-release's too) is ValenBuild's.
+            packageVersion = valenVersion.substringBefore('-')
             description = "A music player for Spotify, YouTube Music and SoundCloud"
             // dbus-java reads the uid with com.sun.security.auth.module.UnixSystem; the
             // trimmed runtime Compose builds leaves jdk.security.auth out, and MPRIS then
@@ -114,6 +148,9 @@ compose.desktop {
                 appCategory = "AudioVideo"
                 menuGroup = "AudioVideo"
                 debMaintainer = "Valen contributors"
+                // Debian sorts "~" before anything, so 1.0.0~alpha.2 < 1.0.0~beta.1 < 1.0.0: apt sees each
+                // test build as newer than the last, and the release as newer than all of them.
+                debPackageVersion = valenVersion.replace('-', '~')
                 shortcut = true
             }
         }

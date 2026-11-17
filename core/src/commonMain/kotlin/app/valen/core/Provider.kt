@@ -228,6 +228,8 @@ data class AppSettings(
      * the end of the week ([recapDue]). Off until turned on.
      */
     val recapAlways: Boolean = false,
+    /** Whether Valen looks for new releases, and whether test builds count (Settings → About). */
+    val updates: UpdatePrefs = UpdatePrefs(),
 )
 
 /** Whether a service's player can apply Valen's sound effects. */

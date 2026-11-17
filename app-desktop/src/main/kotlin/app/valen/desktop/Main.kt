@@ -75,6 +75,9 @@ private fun windowRun(cli: Cli) {
     val settings = settingsStore()
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val hosts = DesktopHosts(scope)
+    // Restart after an update closes Valen the usual way; the window's scope fills this in.
+    val quit = java.util.concurrent.atomic.AtomicReference<() -> Unit> {}
+    val updater = desktopUpdater(scope) { javax.swing.SwingUtilities.invokeLater { quit.get()() } }
 
     application {
         var boot: Boot? by remember { mutableStateOf(null) }
@@ -90,6 +93,10 @@ private fun windowRun(cli: Cli) {
             hosts.close()
             scope.cancel()
         }
+        quit.set {
+            shutdown()
+            exitApplication()
+        }
 
         LaunchedEffect(Unit) {
             // No browser at boot: YouTube Music and SoundCloud resolve and play natively. Chrome
@@ -104,7 +111,10 @@ private fun windowRun(cli: Cli) {
                 lyrics = desktopLyrics(built.providers),
                 offline = built.shelf,
                 presence = presence,
+                version = ValenBuild.VERSION,
+                updates = updater.updates,
             )
+            updater.follow(coordinator)
             val playlists = buildPlaylists(built, coordinator)
             presence.start(coordinator)
             val mpris = MprisService(coordinator, scope)
@@ -192,6 +202,9 @@ private fun screenshotRun(cli: Cli) {
             lyrics = desktopLyrics(built.providers),
             offline = built.shelf,
             presence = DiscordPresence(scope),
+            version = ValenBuild.VERSION,
+            // A screenshot never looks for updates; VALEN_CAPTURE_UPDATE shows one state of them.
+            updates = Capture.updates(),
         )
         cli.play?.let { play(coordinator, it) }
         coordinator to buildPlaylists(built, coordinator)

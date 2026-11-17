@@ -15,6 +15,16 @@ fun lyprioSetting(name: String): String =
     (providers.gradleProperty(name).orNull ?: System.getenv(name) ?: localProperties.getProperty(name)).orEmpty().trim()
 fun quoted(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
+// The key a phone build is signed with. An update installs over the app only when both are signed
+// by the same key, so the release workflow and this machine must use one keystore: given as
+// VALEN_KEYSTORE (a path) with VALEN_KEYSTORE_PASSWORD, VALEN_KEY_ALIAS and VALEN_KEY_PASSWORD, as
+// Gradle properties, environment variables or local.properties. None given: the debug key, as
+// before (and every release since uses it, so it is the key to give the workflow; see RELEASING.md).
+fun signingSetting(name: String): String =
+    (providers.gradleProperty(name).orNull ?: System.getenv(name) ?: localProperties.getProperty(name)).orEmpty().trim()
+val releaseKeystore = signingSetting("VALEN_KEYSTORE")
+val spotifyOnAndroid = (findProperty("valen.android.spotify") as String?)?.trim()?.toBoolean() ?: false
+
 android {
     namespace = "app.valen.android"
     compileSdk = 37
@@ -23,8 +33,12 @@ android {
         applicationId = "app.valen"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = rootProject.extra["valenVersionCode"] as Int
+        versionName = rootProject.extra["valenVersion"] as String
+        // Spotify is frozen on Android for now (gradle.properties, valen.android.spotify).
+        buildConfigField("boolean", "SPOTIFY", spotifyOnAndroid.toString())
+        // Where updates come from: the releases of this repository (VALEN_UPDATE_REPO overrides).
+        buildConfigField("String", "UPDATE_REPO", quoted(signingSetting("VALEN_UPDATE_REPO").ifEmpty { "dodo986/valen" }))
         buildConfigField("String", "LYPRIO_BASE_URL", quoted(lyprioSetting("LYPRIO_BASE_URL")))
         buildConfigField("String", "LYPRIO_HMAC_KEY", quoted(lyprioSetting("LYPRIO_HMAC_KEY")))
     }
@@ -32,6 +46,17 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    signingConfigs {
+        if (releaseKeystore.isNotEmpty()) {
+            create("valen") {
+                storeFile = rootProject.file(releaseKeystore)
+                storePassword = signingSetting("VALEN_KEYSTORE_PASSWORD")
+                keyAlias = signingSetting("VALEN_KEY_ALIAS")
+                keyPassword = signingSetting("VALEN_KEY_PASSWORD").ifEmpty { signingSetting("VALEN_KEYSTORE_PASSWORD") }
+            }
+        }
     }
 
     buildTypes {
@@ -43,12 +68,12 @@ android {
         // optimisations held back and Compose with its checks on, which made every screen lag
         // (lyrics on the emulator: 20 ms a frame in debug). R8 shrinks and optimises the libraries
         // (Compose above all); Valen's own classes are kept whole (see proguard-rules.pro). Signed
-        // with the debug key so it installs without a keystore; a store release brings its own.
+        // with the release keystore when one is given, else the debug key (see signingSetting).
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("valen") ?: signingConfigs.getByName("debug")
         }
     }
 
@@ -66,6 +91,7 @@ dependencies {
     implementation(project(":providers:soundcloud"))
     implementation(project(":providers:native"))
     implementation(project(":providers:lyrics"))
+    implementation(project(":libs:update"))
     implementation(project(":host:android"))
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.compose.ui:ui")

@@ -21,7 +21,7 @@ Playback runs through each service's **own official player** — the Spotify Web
 <details>
 <summary><b>how does it work?? </b></summary>
 
-- **Spotify** plays through its official Web Player, driven over Chrome DevTools on the desktop and through a relayed WebView on Android. The page only fetches audio while it believes it has focus; on the desktop Valen emulates that focus, so the browser window may stay in the background.
+- **Spotify** plays through its official Web Player, driven over Chrome DevTools on the desktop. On Android, Spotify is switched off for now (`valen.android.spotify` in `gradle.properties`), and a Spotify song plays from YouTube Music or SoundCloud. The page only fetches audio while it believes it has focus; on the desktop Valen emulates that focus, so the browser window may stay in the background.
 - **YouTube Music and SoundCloud** are native on both platforms, with no browser at all: [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor) resolves a stream address and `ffplay` plays it on the desktop, while the same resolvers run through ExoPlayer on Android.
 - **Spotify's streams are never downloaded.** Its audio is DRM-protected and its servers watch for bulk fetching, so a Spotify song you keep is kept as the same recording from YouTube Music (else SoundCloud), matched as strictly as a playlist import.
 - **SoundCloud tracks that exist only as encrypted HLS are left out of search**, not decrypted. The same song on another service is the copy offered instead.
@@ -45,6 +45,7 @@ Playback runs through each service's **own official player** — the Spotify Web
 - **Songs kept on disk.** YouTube Music and SoundCloud songs are kept as they play, and the next song is fetched ahead, so a song heard before starts at once with no lookup and no network. The desktop keeps up to 3 GB, Android up to 1.5 GB; the songs played longest ago go first.
 - **Offline.** A list Valen keeps by itself: every song that plays with no network — downloaded, or kept whole after a listen. It appears with its first song, leaves with its last, and Settings → Downloads can hide it.
 - **Local device.** You can listen to your local songs, playlists and mix them with cloud ones as one.
+- **Updates.** Both apps follow Valen's GitHub releases. The AppImage replaces itself for the next start, the Android app downloads off mobile data and installs with one press, and every file is checked against its release's SHA-256 first. See [RELEASING.md](RELEASING.md).
 - **Artists.** Every artist has a page put together from Spotify and YouTube Music at once.
 - **Taste and mixes.** Home's "For you", artist mixes and smart playlists score songs and artists from the welcome's favourites, listening time and early skips; Start radio plays the song you are on and then more, scored by your taste.
 

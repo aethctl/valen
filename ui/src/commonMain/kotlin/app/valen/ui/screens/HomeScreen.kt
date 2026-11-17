@@ -119,7 +119,7 @@ fun HomeScreen(
     val history = remember(queue, index) {
         if (index <= 0) emptyList() else queue.take(index).reversed().distinctBy { it.key }.take(12)
     }
-    val signedOut = ProviderId.services.none { sessions[it] is SessionState.Connected }
+    val signedOut = coordinator.services.none { sessions[it] is SessionState.Connected }
 
     fun playPlaylist(playlist: Playlist) {
         val playable = playlist.tracks.filter { playlists.canPlay(it) }
@@ -136,7 +136,7 @@ fun HomeScreen(
         Lead(
             track = current,
             isPlaying = snapshot?.isPlaying == true,
-            connected = ProviderId.services.count { sessions[it] is SessionState.Connected },
+            connected = coordinator.services.count { sessions[it] is SessionState.Connected },
             onToggle = { scope.launch { coordinator.toggle() } },
             onOpenPlayer = { onRoute(Route.NowPlaying) },
             onSearch = { onRoute(Route.Search) },
@@ -205,6 +205,7 @@ fun HomeScreen(
                 SectionHeader(title = "Services", modifier = Modifier.arrive(6, ItemArrival.Swing))
                 Spacer(Modifier.height(Space.step2))
                 ServiceTiles(
+                    services = coordinator.services,
                     sessions = sessions,
                     onConnect = { id -> scope.launch { coordinator.connect(id) } },
                 )
@@ -542,13 +543,13 @@ private fun StartBody(connected: Int, onSearch: () -> Unit) {
     }
 }
 
-/** The three services: side by side when there is room for their buttons, stacked when not. */
+/** The services this build has: side by side when there is room for their buttons, stacked when not. */
 @Composable
-private fun ServiceTiles(sessions: Map<ProviderId, SessionState>, onConnect: (ProviderId) -> Unit) {
+private fun ServiceTiles(services: List<ProviderId>, sessions: Map<ProviderId, SessionState>, onConnect: (ProviderId) -> Unit) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         if (maxWidth >= 880.dp) {
             Row(horizontalArrangement = Arrangement.spacedBy(Space.step2)) {
-                ProviderId.services.forEach { provider ->
+                services.forEach { provider ->
                     ServiceTile(
                         provider = provider,
                         state = sessions[provider] ?: SessionState.SignedOut,
@@ -559,7 +560,7 @@ private fun ServiceTiles(sessions: Map<ProviderId, SessionState>, onConnect: (Pr
             }
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(Space.step2)) {
-                ProviderId.services.forEach { provider ->
+                services.forEach { provider ->
                     ServiceTile(
                         provider = provider,
                         state = sessions[provider] ?: SessionState.SignedOut,
