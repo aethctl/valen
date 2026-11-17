@@ -13,6 +13,10 @@ tag's version, writes `valen-release.json`, and publishes them together. The rel
 until every file is on it. A tag with `-alpha`/`-beta`/`-rc` becomes a pre-release, and only copies
 that take test builds are offered it.
 
+Once the release is out, a second job (`flake`) points `flake.nix` on `main` at its AppImage
+(version and hash, `scripts/bump-flake.sh`). It only moves forward, so releasing an older tag
+again leaves the flake alone. NixOS machines pick it up with `nix flake update valen`.
+
 Bump `valen.version` in `gradle.properties` after a release, so local builds name the next version.
 The tag decides the version of a release build, not the file.
 

@@ -79,8 +79,9 @@ them in Git.
 The flake wraps the official release AppImage as it is (its JVM, launcher, UI, desktop entry and
 icon) and adds the runtime pieces it does not bundle: Nixpkgs Chrome for Spotify, FFmpeg and CA
 certificates. Releases since 1.0.0-alpha.2 include desktop session recovery, so the overlay that
-patched ALPHA-1 is gone. For a new release, change `version` in `flake.nix` and set `hash` to the
-release manifest's `linux-appimage` sha256 (in SRI form). Valen's own updater does not replace a
+patched ALPHA-1 is gone. The release workflow points `flake.nix` at each new release by itself (`scripts/bump-flake.sh`:
+its version, and the manifest's `linux-appimage` sha256 in SRI form, committed to `main`); a
+NixOS machine takes it with `nix flake update valen`. Valen's own updater does not replace a
 Nix copy; it only says a new release is out. Only x86_64-linux is provided because that is the
 architecture of the official AppImage. Chrome (including Widevine) is an unfree runtime dependency,
 allowed only in this flake's package set.
