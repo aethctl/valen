@@ -22,7 +22,7 @@
       };
       releaseContents = pkgs.appimageTools.extract {
         inherit pname src;
-        version = "1.0.0-alpha.1";
+        version = "1.0.0-alpha.3";
       };
       contents = pkgs.callPackage ./nix/session-recovery.nix {
         inherit version;
