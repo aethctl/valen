@@ -117,8 +117,13 @@ class GithubUpdater(
         launchWork(afterCurrent = true) { look(force = true) }
     }
 
+    /**
+     * Download (when needed) and install. Like [check] it waits for work that is finishing; it
+     * reads the state only when its turn comes, so a press during a download installs that
+     * download once it is done and never starts a second one.
+     */
     override fun update() {
-        launchWork {
+        launchWork(afterCurrent = true) {
             when (val now = _state.value) {
                 is UpdateState.Available -> obtain(now.release, install = true)
                 is UpdateState.Ready -> obtain(now.release, install = true)
@@ -161,9 +166,9 @@ class GithubUpdater(
     }
 
     /**
-     * One piece of work at a time. Normally a press while work runs does nothing (a second Update
-     * must not start a second download); [afterCurrent] queues it behind the running work instead.
-     * At most one waits: a second queued look while one already waits is dropped.
+     * One piece of work at a time. The scheduler's own looks are dropped while work runs; a
+     * person's press ([afterCurrent]) waits behind it instead, since the state can already show
+     * the end of that work while its last steps run. At most one waits; more presses are dropped.
      */
     private fun launchWork(afterCurrent: Boolean = false, block: suspend () -> Unit) {
         synchronized(this) {
