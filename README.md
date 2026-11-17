@@ -61,3 +61,4 @@ Valen is GPL-3.0. It stands on other people's work, and says so in [`NOTICE`](NO
 - **[Astra](https://github.com/Boof2015/astra)** — the parametric EQ filter model, presets and AutoEQ parsing (GPL-3.0).
 
 Valen is not affiliated with Spotify AB, Google/YouTube or SoundCloud.
+Llm(s) were used for assistance, the project itself is not purely vibecoded, has my own code in it and was the one who directed ai, if you want to call it vibecoded though i dont mind.
