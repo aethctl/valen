@@ -100,9 +100,10 @@ class GithubUpdater(
                 // Taking test builds or no longer taking them changes what counts as newer: look again.
                 if (testsChanged && memory.checkedAt > 0) memory = memory.copy(checkedAt = 0)
                 delay(firstLookMs)
+                launchWork { look(force = false) }
                 while (true) {
-                    if (clock() - memory.checkedAt >= LOOK_EVERY_MS) launchWork { look(force = false) }
                     delay(everyMs)
+                    if (clock() - memory.checkedAt >= LOOK_EVERY_MS) launchWork { look(force = false) }
                 }
             }
         }
@@ -463,7 +464,7 @@ class GithubUpdater(
         private val NO_FILE = app.valen.core.ReleaseAsset(platform = "", name = "", size = 0, sha256 = "")
 
         /** The first look, a little after start, so the first screen comes first. */
-        const val FIRST_LOOK_MS = 20_000L
+        const val FIRST_LOOK_MS = 5_000L
 
         /** How often the loop wakes to see whether a look is due. */
         const val EVERY_MS = 30 * 60_000L
