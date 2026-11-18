@@ -654,70 +654,6 @@ private fun DownloadsPart(coordinator: PlaybackCoordinator) {
 }
 
 @Composable
-private fun DiscordPart(coordinator: PlaybackCoordinator) {
-    val link = coordinator.presence ?: return
-    val settings by coordinator.settings.collectAsState()
-    val status by link.status.collectAsState()
-    val presence = settings.presence
-    Note(presenceSentence(status, presence.enabled), Modifier.arrive(1))
-    Group(
-        buildList {
-            add {
-                SwitchRow(
-                    title = "Show on Discord",
-                    body = "Your profile says Listening to Valen, with the song, its cover and the time bar.",
-                    checked = presence.enabled,
-                    onChange = { on -> coordinator.setPresence { it.copy(enabled = on) } },
-                )
-            }
-            if (presence.enabled) {
-                add {
-                    SwitchRow(
-                        title = "Cover",
-                        body = "The song's cover, with Valen's mark in its corner.",
-                        checked = presence.cover,
-                        onChange = { on -> coordinator.setPresence { it.copy(cover = on) } },
-                    )
-                }
-                add {
-                    SwitchRow(
-                        title = "Time bar",
-                        body = "How far into the song you are, moving on its own.",
-                        checked = presence.progress,
-                        onChange = { on -> coordinator.setPresence { it.copy(progress = on) } },
-                    )
-                }
-                add {
-                    SwitchRow(
-                        title = "The line being sung",
-                        body = "When a song has timed lyrics, the line you hear takes the artist's place for a moment.",
-                        checked = presence.lyricLine,
-                        onChange = { on -> coordinator.setPresence { it.copy(lyricLine = on) } },
-                    )
-                }
-                add {
-                    SwitchRow(
-                        title = "Where it plays from",
-                        body = "Spotify, YouTube Music, SoundCloud or this device, under the cover.",
-                        checked = presence.service,
-                        onChange = { on -> coordinator.setPresence { it.copy(service = on) } },
-                    )
-                }
-                add {
-                    SwitchRow(
-                        title = "Song button",
-                        body = "Friends can open the song on its service from your profile.",
-                        checked = presence.buttons,
-                        onChange = { on -> coordinator.setPresence { it.copy(buttons = on) } },
-                    )
-                }
-            }
-        },
-        modifier = Modifier.arrive(2),
-    )
-}
-
-@Composable
 private fun AboutPart(
     coordinator: PlaybackCoordinator,
     playlists: PlaylistManager?,
@@ -914,19 +850,9 @@ private fun sizeText(bytes: Long): String = when {
     else -> "${(bytes + 500) / 1000} KB"
 }.ifEmpty { "0 KB" }
 
-/** Where the link to Discord stands, in one sentence. */
-private fun presenceSentence(status: PresenceStatus, enabled: Boolean): String = when (status) {
-    PresenceStatus.Off -> if (enabled) "Starting…" else "Off. Turn it on to show what you play on your Discord profile."
-    PresenceStatus.NeedsAppId -> "The application id Valen was given is not a number. Remove it to use Valen's own."
-    PresenceStatus.NoDiscord -> "Discord is not open. Valen looks for it every few seconds."
-    PresenceStatus.Connecting -> "Looking for Discord…"
-    is PresenceStatus.Connected -> status.user?.let { "Showing on Discord as $it." } ?: "Showing on Discord."
-    is PresenceStatus.Failed -> status.reason
-}
-
 /** The line under a group's title that says what the group does. */
 @Composable
-private fun Note(text: String, modifier: Modifier = Modifier) {
+internal fun Note(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodyMedium,
@@ -937,7 +863,7 @@ private fun Note(text: String, modifier: Modifier = Modifier) {
 
 /** A setting that is on or off: its name, a line saying what it does, and the switch. The row is the press. */
 @Composable
-private fun SwitchRow(title: String, body: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchRow(title: String, body: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier

@@ -14,4 +14,4 @@
 - [ ] Better UI/UX and much cooler animations.
 - [ ] Ad blocker for Spotify (maybe with a Go daemon?).
 - [ ] Look for bugs in the backend.
-- [ ] Discord RPC settings.
+- [x] Discord RPC settings.

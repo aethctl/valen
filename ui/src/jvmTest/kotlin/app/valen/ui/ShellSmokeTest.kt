@@ -509,12 +509,34 @@ class ShellSmokeTest {
             // Nothing to set up: the card is named after Valen's own application, so there is no id
             // field left to type into.
             assertTrue(runCatching { onNodeWithText("Application id").assertExists() }.isFailure)
-            onNode(hasText("Song button") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+
+            onNode(hasText("Second line") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
             settle()
-            assertEquals(false, coordinator.settings.value.presence.buttons)
-            onNode(hasText("The line being sung") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+            assertEquals(app.valen.core.PresenceDisplay.SECOND, coordinator.settings.value.presence.display)
+
+            onAllNodes(hasSetTextAction()).onFirst().performTextClearance()
+            onAllNodes(hasSetTextAction()).onFirst().performTextInput("{artist} · {album}")
             settle()
-            assertEquals(true, coordinator.settings.value.presence.lyricLine)
+            assertEquals("{artist} · {album}", coordinator.settings.value.presence.details)
+            onAllNodes(hasText("Artist") and hasClickAction()).onFirst().performSemanticsAction(SemanticsActions.OnClick)
+            settle()
+            assertTrue(coordinator.settings.value.presence.details.contains("{artist}"))
+
+            onAllNodes(hasText("Valen's mark") and hasClickAction()).onFirst().performSemanticsAction(SemanticsActions.OnClick)
+            settle()
+            assertEquals(false, coordinator.settings.value.presence.mark)
+            onNode(hasText("Count down") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+            settle()
+            assertEquals(app.valen.core.PresenceTime.REMAINING, coordinator.settings.value.presence.time)
+            onNode(hasText("Hide now") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+            settle()
+            assertEquals(app.valen.core.PresencePause.AT_ONCE, coordinator.settings.value.presence.pause)
+            onNode(hasText("The song's page") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+            settle()
+            assertEquals(false, coordinator.settings.value.presence.songButton)
+            onNode(hasText("Valen's page") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
+            settle()
+            assertEquals(false, coordinator.settings.value.presence.homeButton)
 
             onNodeWithText("Playlists").performClick()
             settle()

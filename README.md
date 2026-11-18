@@ -49,6 +49,7 @@ Playback runs through each service's **own official player** (Spotify Web Player
 - **Local files.** Play your local audio files and mix them directly into playlists alongside cloud tracks.
 - **Self-updating.** Both clients pull updates straight from GitHub Releases. The Linux AppImage swaps itself out for the next launch, and the Android app downloads and triggers the installer in one tap. Everything is verified via SHA-256 before applying. See [RELEASING.md](RELEASING.md).
 - **Unified artist pages.** Artist views combine metadata and catalogs from Spotify and YouTube Music into one page.
+- **Discord.** Your profile can say what you're playing, and everything on that card is yours to set — the two lines (with the song's title, artist, album, service, queue place or the line being sung filled in), what the member list says, the cover and Valen's mark, the time bar, what happens when you pause, and two buttons. Settings → Discord previews the card as you change it; Discord draws the buttons for other people only.
 - **Recommendations & Radio.** Home mixes, artist mixes, and "For You" rankings adapt based on your onboarding picks, listen duration, and early skips. Hit "Start radio" on any track to keep similar music rolling.
 
 ![a marker line with a drip](docs/readme/divider.svg)

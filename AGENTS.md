@@ -483,13 +483,22 @@ Key invariants:
   `VALEN_DISCORD_APP_ID` (the only override; there is no id field in Settings). At most one
   `SET_ACTIVITY` per 4.1 s (Discord allows
   5 per 20 s), the latest winning; a seek only when the bar moves > 2.5 s. Activity type 2
-  (Listening) with `status_display_type` 0, so the member list reads "Listening to Valen". Discord
-  closed is a quiet `NoDiscord`, looked for every 15 s. Its loop is a background 1 s tick, not a
-  UI frame loop. Valen's mark rides on the cover as Discord's *small image* (`MARK`, the art asset
+  (Listening). Discord closed is a quiet `NoDiscord`, looked for every 15 s. Its loop is a
+  background 1 s tick, not a UI frame loop. Settings → Discord shapes the card: `core/Presence.kt`
+  holds `PresenceSettings` (both lines as templates, the two hover texts, the member-list display,
+  the time, what a pause does, cover/mark and the two buttons) and `PresenceCard.of(now, settings, homepage)` works the activity out from it and
+  the song. Templates take `{title}`, `{artist}`, `{album}`, `{source}`, `{queue}`, `{line}`,
+  `{status}`, `{played}`, `{elapsed}`, `{left}`, `{length}`, fall back with `{line|artist}`, and
+  keep unknown words as typed, so nothing on the card is a fixed string. `status_display_type` is
+  the member-list choice (0 Valen, 1 first line, 2 second line). The settings part draws the same
+  card as a preview and offers the words as chips that add their token; `DiscordPresence` sends the
+  activity again on any `PresenceSettings` change (`cardChanged`), and the sung line is looked up
+  only while a line asks for it. Old `settings.json` files load: their switches land on the
+  templates. Valen's mark rides on the cover as Discord's *small image* (`MARK`, the art asset
   `valen`): RPC has only `large_image` and `small_image`, no compositing, so the badge is drawn by
   Discord from that asset — `packaging/discord/valen.png`, uploaded once to the application in the
-  developer portal. The card's second button reads **Get Valen** and opens
-  `DiscordPresence.HOMEPAGE` (`VALEN_HOMEPAGE` overrides). Discord shows buttons only to *other*
+  developer portal. The card's second button reads **Get Valen** and opens `PresenceCard.HOMEPAGE`
+  (`VALEN_HOMEPAGE` overrides). Discord shows buttons only to *other*
   people: no field of them ever appears on one's own profile, so that is not a bug to chase (the
   payload is what counts, and a second account is the only way to see them).
 - **Provider failures are shown, never hidden.** A failed service is named beside the other

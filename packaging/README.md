@@ -36,8 +36,11 @@ distro that prefers its own packaging.
   a session bus the app still runs and says so on stderr.
 - **A Discord desktop client, for the profile card.** Settings → Discord makes
   the profile read "Listening to Valen" through the client's local socket
-  (`discord-ipc-N`); nothing is installed and no service runs. The card is named
-  after Valen's own Discord application, so the person sets nothing up. Its art
+  (`discord-ipc-N`); nothing is installed and no service runs. What the card says
+  (both lines, the member list's text, the time, what a pause does, the cover and
+  Valen's mark, and up to two buttons) is set in the same part, with the card
+  previewed from the playing song. The card is named after Valen's own Discord
+  application, so the person sets nothing up. Its art
   is uploaded once to that application: `discord/valen.png` here (1024×1024, the
   key `valen`). Discord draws it as the small image over the cover's corner —
   the only slot it offers for a mark on the cover.

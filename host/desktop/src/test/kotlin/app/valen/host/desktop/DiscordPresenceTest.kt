@@ -1,24 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 package app.valen.host.desktop
 
-import app.valen.core.LyricLine
-import app.valen.core.Lyrics
-import app.valen.core.LyricsState
-import app.valen.core.LyricsTiming
-import app.valen.core.PresenceSettings
-import app.valen.core.ProviderId
-import app.valen.core.Track
+import app.valen.core.PresenceButton
+import app.valen.core.PresenceCard
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.long
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -31,98 +23,7 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import kotlin.concurrent.thread
 
-/** Discord's card: what it says, and the socket protocol it is said over. */
 class DiscordPresenceTest {
-
-    private val song = Track(
-        provider = ProviderId.SPOTIFY,
-        id = "2Foc5Q5nqNiosCNqttzHof",
-        title = "Get Lucky",
-        artist = "Daft Punk, Pharrell Williams",
-        album = "Random Access Memories",
-        artworkUrl = "https://i.scdn.co/image/abc",
-        durationMs = 248_000,
-    )
-
-    @Test
-    fun `a playing song is a listening card with its bar, cover, mark and button`() {
-        val now = 1_000_000L
-        val a = DiscordPresence.activity(
-            DiscordPresence.PresenceInput(song, playing = true, positionMs = 60_000, durationMs = 248_000, place = 3, of = 41),
-            PresenceSettings(enabled = true),
-            homepage = null,
-            now = now,
-        )
-        assertEquals(2, a["type"]!!.jsonPrimitive.content.toInt())
-        assertEquals("Get Lucky", a["details"]!!.jsonPrimitive.content)
-        assertEquals("Daft Punk, Pharrell Williams", a["state"]!!.jsonPrimitive.content)
-        val time = a["timestamps"]!!.jsonObject
-        assertEquals(now - 60_000, time["start"]!!.jsonPrimitive.long)
-        assertEquals(now - 60_000 + 248_000, time["end"]!!.jsonPrimitive.long)
-        val assets = a["assets"]!!.jsonObject
-        assertEquals("https://i.scdn.co/image/abc", assets["large_image"]!!.jsonPrimitive.content)
-        assertEquals("Random Access Memories · from Spotify", assets["large_text"]!!.jsonPrimitive.content)
-        assertEquals("valen", assets["small_image"]!!.jsonPrimitive.content)
-        assertEquals("Valen · 3 of 41 in the queue", assets["small_text"]!!.jsonPrimitive.content)
-        val button = a["buttons"]!!.jsonArray.single().jsonObject
-        assertEquals("Play on Spotify", button["label"]!!.jsonPrimitive.content)
-        assertEquals("https://open.spotify.com/track/2Foc5Q5nqNiosCNqttzHof", button["url"]!!.jsonPrimitive.content)
-
-        val withPage = DiscordPresence.activity(
-            DiscordPresence.PresenceInput(song, playing = true, positionMs = 0, durationMs = 248_000),
-            PresenceSettings(enabled = true),
-            homepage = DiscordPresence.HOMEPAGE,
-            now = now,
-        )
-        val page = withPage["buttons"]!!.jsonArray.last().jsonObject
-        assertEquals("Get Valen", page["label"]!!.jsonPrimitive.content)
-        assertEquals("https://github.com/dodo986/valen", page["url"]!!.jsonPrimitive.content)
-    }
-
-    @Test
-    fun `paused, a device file and the switches change what is shown`() {
-        val local = Track(ProviderId.LOCAL, "/m/a.flac", "Kerala", "Bonobo", artworkUrl = "file:///c.jpg", durationMs = 240_000)
-        val a = DiscordPresence.activity(
-            DiscordPresence.PresenceInput(local, playing = false, positionMs = 10_000, durationMs = 240_000),
-            PresenceSettings(enabled = true),
-            homepage = null,
-            now = 0,
-        )
-        assertNull(a["timestamps"], "no bar while paused")
-        assertEquals("Paused · Bonobo", a["state"]!!.jsonPrimitive.content)
-        assertEquals("valen", a["assets"]!!.jsonObject["large_image"]!!.jsonPrimitive.content, "a file cover cannot reach Discord")
-        assertNull(a["assets"]!!.jsonObject["small_image"], "the mark is never drawn on itself")
-        assertNull(a["buttons"])
-
-        val quiet = DiscordPresence.activity(
-            DiscordPresence.PresenceInput(song, playing = true, positionMs = 0, durationMs = 248_000, line = "We're up all night to get lucky", kept = true),
-            PresenceSettings(enabled = true, cover = false, progress = false, service = false, buttons = false),
-            homepage = "https://valen.example",
-            now = 0,
-        )
-        assertNull(quiet["timestamps"])
-        assertNull(quiet["buttons"])
-        assertEquals("♪ We're up all night to get lucky", quiet["state"]!!.jsonPrimitive.content)
-        assertEquals("valen", quiet["assets"]!!.jsonObject["large_image"]!!.jsonPrimitive.content)
-        assertEquals("Random Access Memories", quiet["assets"]!!.jsonObject["large_text"]!!.jsonPrimitive.content)
-    }
-
-    @Test
-    fun `the sung line is the last one started, and nothing in a long gap`() {
-        val lyrics = LyricsState.Found(
-            Lyrics(
-                listOf(LyricLine(1_000, 3_000, "one"), LyricLine(3_000, 5_000, "two"), LyricLine(20_000, 22_000, "three")),
-                LyricsTiming.Lines,
-                "test",
-            ),
-        )
-        assertNull(DiscordPresence.lineAt(lyrics, 500))
-        assertEquals("one", DiscordPresence.lineAt(lyrics, 1_200))
-        assertEquals("two", DiscordPresence.lineAt(lyrics, 4_000))
-        assertNull(DiscordPresence.lineAt(lyrics, 10_000))
-        assertNull(DiscordPresence.lineAt(LyricsState.Missing, 1_200))
-    }
-
     @Test
     fun `the socket speaks Discord's frames, handshake first`(@TempDir dir: File) {
         val socket = File(dir, "discord-ipc-0")
@@ -170,6 +71,33 @@ class DiscordPresenceTest {
         assertTrue("/run/user/1000/snap.discord/discord-ipc-3" in all)
         assertFalse(all.any { "//" in it })
     }
+
+    @Test
+    fun `a settings change or a seek sends the card again, its clock tick does not`() {
+        val a = card()
+        assertTrue(DiscordPresence.cardChanged(null, a), "the first card is always sent")
+        assertTrue(DiscordPresence.cardChanged(a, null), "and clearing it")
+        assertTrue(DiscordPresence.cardChanged(a, a.copy(details = "Another song")))
+        assertTrue(DiscordPresence.cardChanged(a, a.copy(largeImage = PresenceCard.MARK)))
+        assertTrue(DiscordPresence.cardChanged(a, a.copy(buttons = emptyList())))
+        assertFalse(DiscordPresence.cardChanged(a, a.copy(startMs = a.startMs!! + 900, endMs = a.endMs!! + 900)), "a second of clock jitter is the same card")
+        assertTrue(DiscordPresence.cardChanged(a, a.copy(startMs = a.startMs!! + 4_000, endMs = a.endMs!! + 4_000)), "a seek moves the bar")
+        assertTrue(DiscordPresence.cardChanged(a, a.copy(startMs = null, endMs = null)), "the time off is a change")
+    }
+
+    private fun card(startMs: Long = 1_000_000, endMs: Long = 1_248_000) = PresenceCard(
+        memberText = "Valen",
+        details = "Get Lucky",
+        state = "Daft Punk",
+        detailsUrl = "https://open.spotify.com/track/x",
+        largeImage = "https://i.scdn.co/image/abc",
+        largeText = "Random Access Memories · from Spotify",
+        smallImage = PresenceCard.MARK,
+        smallText = "Valen · one queue for every service",
+        buttons = listOf(PresenceButton("Play on Spotify", "https://open.spotify.com/track/x")),
+        startMs = startMs,
+        endMs = endMs,
+    )
 
     private fun read(c: SocketChannel): Pair<Int, JsonObject> {
         val head = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
