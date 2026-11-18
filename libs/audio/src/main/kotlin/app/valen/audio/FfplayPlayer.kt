@@ -2,6 +2,7 @@
 package app.valen.audio
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -56,7 +57,7 @@ class FfplayPlayer(
 
     private val lock = Any()
 
-    private var process: Process? = null
+    @Volatile private var process: Process? = null
     private var stream: ResolvedStream? = null
     private var volume: Float = 1f
 
@@ -103,6 +104,7 @@ class FfplayPlayer(
     private var restart: Job? = null
     private var reader: Job? = null
     private var earlyRetries = 0
+    @Volatile private var mediaDurationMs = 0L
 
     init {
         // A Valen that is killed leaves no FFmpeg behind playing to an empty room.
@@ -130,6 +132,7 @@ class FfplayPlayer(
         stopProcess()
         val bin = binary ?: throw IllegalStateException(MISSING_FFPLAY)
         this.stream = stream
+        mediaDurationMs = stream.durationMs.coerceAtLeast(0L)
         earlyRetries = 0
         lastError = null
         offsetMs = startMs.coerceAtLeast(0L)
@@ -191,7 +194,7 @@ class FfplayPlayer(
     private suspend fun seekLocked(positionMs: Long) {
         val s = stream ?: return
         val bin = binary ?: return
-        val at = positionMs.coerceAtLeast(0L).coerceAtMost(if (s.durationMs > 0) s.durationMs else Long.MAX_VALUE)
+        val at = positionMs.coerceAtLeast(0L).coerceAtMost(if (mediaDurationMs > 0) mediaDurationMs else Long.MAX_VALUE)
         val wasPlaying = _state.value.playing
         stopProcess()
         offsetMs = at
@@ -308,9 +311,10 @@ class FfplayPlayer(
             .start()
         // Its output is its clock (the status line) and, otherwise, the only account of a stream it
         // refuses: the last lines are kept for the UI.
-        reader = scope.launch(Dispatchers.IO) {
+        reader = scope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             runCatching {
                 proc.inputStream.bufferedReader().forEachLine { raw ->
+                    if (process !== proc) return@forEachLine
                     if (raw.isBlank()) return@forEachLine
                     // Lines are tagged with their level ("[info] …"): info is the stream's
                     // description and the clock, never something to show a person.
@@ -326,7 +330,12 @@ class FfplayPlayer(
                     }
                     if (line.contains("M-A:") || line.contains("A-V:")) return@forEachLine
                     if (level == "info" || level == "verbose" || level == "debug") {
-                        streamStartOf(line)?.let { if (process === proc || process == null) streamStartSec = it }
+                        streamStartOf(line)?.let { streamStartSec = it }
+                        // Cached songs and catalogue entries may have no duration. ffplay has
+                        // already read the container: use that information without another lookup.
+                        if (stream.durationMs <= 0) {
+                            durationOf(line)?.let { mediaDurationMs = it }
+                        }
                         return@forEachLine
                     }
                     synchronized(diagnostics) {
@@ -343,6 +352,7 @@ class FfplayPlayer(
         synchronized(lock) { process = proc }
         startedAtNanos = System.nanoTime()
         val processReader = reader
+        processReader?.start()
         scope.launch(Dispatchers.IO) {
             val code = runCatching { proc.waitFor() }.getOrDefault(-1)
             processReader?.join()
@@ -353,7 +363,6 @@ class FfplayPlayer(
     private suspend fun onExit(proc: Process, code: Int) {
         // A process this player stopped itself says nothing about the stream.
         var sounded = false
-        var clocked = false
         val current = synchronized(lock) {
             if (stopping === proc) {
                 stopping = null
@@ -361,7 +370,6 @@ class FfplayPlayer(
             } else if (process === proc) {
                 // The clock is this process's: read it before it is let go.
                 sounded = clockSeen && !clockAnchor.isNaN()
-                clocked = clockSeen
                 process = null
                 true
             } else {
@@ -377,10 +385,10 @@ class FfplayPlayer(
         }
         // ffplay exits 0 at the end of a stream — and also when it could not open one at all (a
         // missing file, a refused connection, an expired address). So an exit is an end only when
-        // sound came out; an ffplay without the clock line has only its exit code to go by.
-        if (code == 0 && (sounded || !clocked)) {
-            val at = if (sounded) positionOf(System.nanoTime()) else _state.value.durationMs.takeIf { it > 0 } ?: _state.value.positionMs
-            val duration = _state.value.durationMs
+        // sound came out. No clock at all is also possible when opening the file fails.
+        if (code == 0 && sounded) {
+            val at = positionOf(System.nanoTime())
+            val duration = mediaDurationMs
             // A connection can end cleanly before the media does. Do not tell the queue to advance
             // in that case: reopen at the last heard position, then report an error if it persists.
             if (stream?.checkEarlyEnd == true && sounded && duration > 0 && duration - at > maxOf(EARLY_END_MARGIN_MS, duration / 100)) {
@@ -406,7 +414,10 @@ class FfplayPlayer(
             }?.let(::plain)?.takeIf { it.isNotBlank() }
             val message = lastError ?: said ?: if (code == 0) "the stream would not open" else "the stream stopped (ffplay exited $code)"
             lastError = message
-            _state.value = _state.value.copy(playing = false, buffering = false, stalled = false, error = message)
+            _state.value = _state.value.copy(
+                playing = false, buffering = false, stalled = false, error = message,
+                positionMs = if (sounded) positionOf(System.nanoTime()) else offsetMs,
+            )
         }
     }
 
@@ -461,7 +472,8 @@ class FfplayPlayer(
                     stalled = false
                 }
                 _state.value = _state.value.copy(
-                    positionMs = positionOf(now),
+                    positionMs = if (playing) positionOf(now) else _state.value.positionMs,
+                    durationMs = mediaDurationMs,
                     buffering = buffering,
                     started = _state.value.started || started,
                     stalled = stalled,
@@ -530,13 +542,13 @@ class FfplayPlayer(
             // Before sound, the stream is where it was asked to start.
             if (clockAnchor.isNaN()) return anchorMs
             val position = anchorMs + ((lastClock - clockAnchor) * 1000.0 * processRate).toLong()
-            val duration = _state.value.durationMs.takeIf { it > 0 } ?: stream?.durationMs ?: 0
+            val duration = mediaDurationMs
             return if (duration > 0) position.coerceIn(0, duration) else position.coerceAtLeast(0)
         }
         if (startedAtNanos == 0L) return offsetMs
         val played = ((nanos - startedAtNanos) / 1_000_000 * processRate).toLong()
         val position = offsetMs + played
-        val duration = _state.value.durationMs.takeIf { it > 0 } ?: stream?.durationMs ?: 0
+        val duration = mediaDurationMs
         return if (duration > 0) position.coerceAtMost(duration) else position
     }
 
@@ -565,8 +577,18 @@ class FfplayPlayer(
         /** The stream's start time from ffplay's description ("Duration: 00:02:59.93, start: 1.400000, …"). */
         internal fun streamStartOf(line: String): Double? = START.find(line)?.groupValues?.get(1)?.toDoubleOrNull()
 
+        internal fun durationOf(line: String): Long? {
+            val match = DURATION.find(line) ?: return null
+            val hours = match.groupValues[1].toDoubleOrNull() ?: return null
+            val minutes = match.groupValues[2].toDoubleOrNull() ?: return null
+            val seconds = match.groupValues[3].toDoubleOrNull() ?: return null
+            val ms = (hours * 3600 + minutes * 60 + seconds) * 1000
+            return ms.takeIf { it.isFinite() && it > 0 && it < Long.MAX_VALUE }?.roundToLong()
+        }
+
         private val LEVEL = Regex("^\\[(quiet|panic|fatal|error|warning|info|verbose|debug|trace)\\] ?")
         private val START = Regex("Duration:.*?start:\\s*(-?\\d+(?:\\.\\d+)?)")
+        private val DURATION = Regex("Duration:\\s*(\\d+):(\\d{2}):(\\d{2}(?:\\.\\d+)?)")
 
         /** How long effects must stay put before a playing stream is restarted with them. */
         private const val RESTART_SETTLE_MS = 220L

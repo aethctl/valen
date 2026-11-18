@@ -141,11 +141,12 @@ class NativePlayback(
         } else {
             steadySince = 0L
         }
-        val known = s.durationMs > 0
+        val duration = s.durationMs.takeIf { it > 0 } ?: track.durationMs
+        val known = duration > 0
         // Close to the end is the end: a reopen or a seek there that makes no sound, or a failure in
         // the last seconds, is the song running out rather than breaking.
-        val atEnd = known && s.positionMs >= s.durationMs - EARLY_END_MS
-        val reopenNearEnd = reopenedAt >= 0 && known && reopenedAt >= s.durationMs - REOPEN_END_MS && !s.started
+        val atEnd = known && s.positionMs >= duration - EARLY_END_MS
+        val reopenNearEnd = reopenedAt >= 0 && known && reopenedAt >= duration - REOPEN_END_MS && !s.started
         val ends = s.ended || ((s.error != null || s.stalled) && (atEnd || reopenNearEnd))
         if (!ends) {
             // An address kept from earlier that will not open is looked up again, once.
@@ -168,7 +169,7 @@ class NativePlayback(
                 failOnce(track, s.positionMs, s.error ?: "${track.provider.label} stopped sending the song")
                 return
             }
-        } else if (s.ended && sounded && known && s.positionMs < s.durationMs - EARLY_END_MS &&
+        } else if (s.ended && sounded && known && s.positionMs < duration - EARLY_END_MS &&
             !reopenNearEnd && recoveries < MAX_RECOVERIES
         ) {
             // An early end: the connection closed before the song was over.
@@ -184,7 +185,7 @@ class NativePlayback(
             isPlaying = s.playing,
             isBuffering = s.buffering,
             positionMs = s.positionMs,
-            durationMs = if (s.durationMs > 0) s.durationMs else track.durationMs,
+            durationMs = duration,
             canSeek = player.canSeek,
             canSkip = true,
             volume = volume,
@@ -220,7 +221,7 @@ class NativePlayback(
                 handing.withLock {
                     if (gen != generation.get() || current !== track) return@withLock
                     synchronized(publishing) { reopenedAt = at; fromDisk = false }
-                    player.play(stream, at)
+                    player.play(stream.withDurationOf(track), at)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -298,7 +299,7 @@ class NativePlayback(
                     if (gen != generation.get()) return
                     synchronized(publishing) { fromKept = kept; fromDisk = offline != null }
                     try {
-                        player.play(stream, at)
+                        player.play(stream.withDurationOf(track), at)
                         if (offline == null) cache?.keep(key, stream, playing = true)
                     } catch (e: CancellationException) {
                         throw e
@@ -308,7 +309,7 @@ class NativePlayback(
                         if (offline != null) cache?.forget(key)
                         synchronized(publishing) { fromKept = false; fromDisk = false }
                         val fresh = streamFor(id, fresh = true).copy(cacheKey = key)
-                        player.play(fresh, at)
+                        player.play(fresh.withDurationOf(track), at)
                         cache?.keep(key, fresh, playing = true)
                     }
                 }
@@ -330,6 +331,10 @@ class NativePlayback(
             }
         }
     }
+
+    /** A cache entry can omit metadata; keep the catalogue's length at the sink too. */
+    private fun ResolvedStream.withDurationOf(track: Track): ResolvedStream =
+        if (durationMs > 0 || track.durationMs <= 0) this else copy(durationMs = track.durationMs)
 
     /** Looks the song likely next up ahead, and has the disk keep it, so it starts without a wait. */
     suspend fun prepare(track: Track) {
@@ -398,7 +403,7 @@ class NativePlayback(
                 ?: runCatching { streamOf(idOf(track)).first.copy(cacheKey = keyOf(track)) }.getOrNull()
             if (stream != null && gen == generation.get()) {
                 try {
-                    handing.withLock { if (gen == generation.get()) player.play(stream, at) }
+                    handing.withLock { if (gen == generation.get()) player.play(stream.withDurationOf(track), at) }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {

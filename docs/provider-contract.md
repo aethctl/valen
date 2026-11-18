@@ -143,8 +143,11 @@ will not open).
   clock when available. A clean exit well before a trusted YouTube duration triggers up to two
   reopens at the last position; if it still ends early, it reports a failure, not `TrackEnded`.
   Other sources such as SoundCloud previews do not opt in because their duration may describe the
-  full song rather than the playable preview. Unknown durations and ffplays without a usable clock
-  cannot be checked; reopens use the same URL, not a freshly resolved one.
+  full song rather than the playable preview. Missing stream durations use catalogue metadata
+  when available; otherwise the desktop learns the duration from ffplay's container description,
+  including for existing cached files. An exit without a usable audio clock is a failure, even
+  with exit code zero. Unknown durations cannot be checked for an early end; reopens use the same
+  URL, not a freshly resolved one.
 - `StreamCache` keeps songs on disk by song key (`DiskAudioCache` on the desktop, `ExoStreamCache`
   on Android). `NativePlayback` asks it first: a song kept whole plays with no lookup. It is told of
   every stream played (`keep(playing = true)`) or prepared (`playing = false`), and `forget`s a

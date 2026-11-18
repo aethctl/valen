@@ -103,6 +103,36 @@ class NativePlaybackTest {
     }
 
     @Test
+    fun `a cached stream keeps the catalogue duration at the sink without a lookup`() = runTest {
+        val player = FakePlayer()
+        val scope = CoroutineScope(UnconfinedTestDispatcher(testScheduler))
+        val cache = object : StreamCache {
+            override fun offline(key: String) = ResolvedStream("/cache/song", cacheKey = key)
+            override fun keep(key: String, stream: ResolvedStream, playing: Boolean) = Unit
+            override fun forget(key: String) = Unit
+        }
+        val playback = NativePlayback(player, scope, cache = cache) { _, _ -> error("must stay offline") }
+        playback.play(track, 0)
+        assertEquals(track.durationMs, player.played?.durationMs)
+        assertEquals(track.durationMs, playback.snapshot.value?.durationMs)
+        scope.cancel()
+    }
+
+    @Test
+    fun `an early end with missing sink duration recovers using the catalogue length`() = runTest {
+        val player = FakePlayer()
+        val scope = CoroutineScope(UnconfinedTestDispatcher(testScheduler))
+        val playback = NativePlayback(player, scope) { _, _ -> ResolvedStream("https://example.test/song") }
+        val events = mutableListOf<ProviderEvent>()
+        scope.launch { playback.events.collect { events += it } }
+        playback.play(track, 0)
+        player.emit(AudioState(hasStream = true, started = true, ended = true, positionMs = 60_000))
+        assertTrue(playback.snapshot.value?.isBuffering == true, "the song should reopen, not skip")
+        assertTrue(events.none { it is ProviderEvent.TrackEnded })
+        scope.cancel()
+    }
+
+    @Test
     fun `the end of a stream is reported once, and a new song arms it again`() = runTest {
         val player = FakePlayer()
         val scope = CoroutineScope(UnconfinedTestDispatcher(testScheduler))

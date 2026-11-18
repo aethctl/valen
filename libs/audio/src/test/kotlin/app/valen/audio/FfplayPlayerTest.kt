@@ -10,6 +10,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -18,7 +19,6 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
-import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -42,7 +42,7 @@ class FfplayPlayerTest {
     lateinit var dir: Path
 
     private val ffplay = FfplayPlayer.findBinary()
-    private val ffmpeg = listOf("/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg").firstOrNull { File(it).canExecute() }
+    private val ffmpeg = DiskShelf.tool("ffmpeg", "VALEN_FFMPEG_BIN")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @AfterEach
@@ -168,6 +168,37 @@ class FfplayPlayerTest {
         assertNotNull(withTimeoutOrNull(8_000) { while (p.state.value.error == null) delay(50); true })
         assertTrue(!p.state.value.ended, "a stream that never opened is not an end")
         assertEquals("No such file or directory", p.state.value.error)
+    }
+
+    @Test
+    @Timeout(20)
+    fun `a cached file without catalogue duration learns its length and can seek`() = runBlocking {
+        assumeTrue(ffplay != null && ffmpeg != null)
+        val p = player()
+        p.play(tone(12).copy(durationMs = 0), 0)
+        p.awaitSound()
+        assertTrue(p.state.value.durationMs in 12_000..12_100, "missing container duration: ${p.state.value}")
+        p.seek(6_000)
+        p.awaitSound()
+        assertTrue(p.state.value.durationMs in 12_000..12_100)
+        assertTrue(p.state.value.positionMs in 4_500..7_000)
+        assertFalse(p.state.value.ended)
+        p.stop()
+    }
+
+    @Test
+    @Timeout(10)
+    fun `exit zero without a clock is a failure and never an end`() = runBlocking {
+        val refused = dir.resolve("refused-ffplay").toFile()
+        refused.writeText("#!/bin/sh\necho '[error] stream refused'\nexit 0\n")
+        assertTrue(refused.setExecutable(true))
+        val p = FfplayPlayer(scope, binary = refused.absolutePath)
+        p.play(ResolvedStream("unused", durationMs = 200_000), 0)
+        assertNotNull(withTimeoutOrNull(5_000) { while (p.state.value.error == null) delay(20); true })
+        assertFalse(p.state.value.ended)
+        assertEquals("stream refused", p.state.value.error)
+        assertEquals(0, p.state.value.positionMs)
+        p.stop()
     }
 
     @Test
@@ -303,6 +334,10 @@ class FfplayPlayerTest {
         assertEquals(null to "plain line", FfplayPlayer.splitLevel("plain line"))
         assertEquals(1.4, FfplayPlayer.streamStartOf("  Duration: 00:02:59.93, start: 1.400000, bitrate: 159 kb/s"))
         assertNull(FfplayPlayer.streamStartOf("  Stream #0:0: Audio: opus, 48000 Hz"))
+        assertEquals(179_930L, FfplayPlayer.durationOf("  Duration: 00:02:59.93, start: 1.400000, bitrate: 159 kb/s"))
+        assertEquals(3_723_456L, FfplayPlayer.durationOf("Duration: 01:02:03.456, start: 0.000000"))
+        assertNull(FfplayPlayer.durationOf("Duration: N/A, start: 0.000000"))
+        assertNull(FfplayPlayer.durationOf("Duration: 00:00:00.00"))
         // WebM at a cluster, a turntable (timestamps scaled), an MPEG-TS (clock from 1.4 s).
         assertEquals(34_980L, FfplayPlayer.soundedAt(34.98, 0.0, 1.0, 37_300))
         assertEquals(34_950L, FfplayPlayer.soundedAt(27.96, 0.0, 1.25, 37_300))
