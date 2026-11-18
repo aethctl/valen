@@ -9,7 +9,7 @@
 - [ ] Floating lyrics like Mochy.
 - [ ] An anime mascot.
 - [ ] Search bar for the playlist import page.
-- [ ] Fix some songs skipping.
+- [x] Fix some songs skipping.
 - [ ] A better lyrics API, or fix Lyperia drifting.
 - [ ] Better UI/UX and much cooler animations.
 - [ ] Ad blocker for Spotify (maybe with a Go daemon?).
