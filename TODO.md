@@ -16,3 +16,4 @@
 - [ ] Look for bugs in the backend.
 - [x] Discord RPC settings.
 - [ ] Youtube playlist imports limited to 100 tracks.
+- [ ] Fix the algorithm throwing random slop into the queue.  
