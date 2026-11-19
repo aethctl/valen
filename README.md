@@ -21,15 +21,6 @@ The entire app can be themed from the colours on the album art so every song or 
 
 ![Valen on Android, showing Home, the immersive player, animated lyrics and the listening recap](docs/readme/screens/phones-a.jpg)
 
-## all your music. one place.
-
-Search across Spotify, YouTube Music and SoundCloud and arrange tracks from different providers together and listen in the order you chose. If you find a song you like, Valen gives you the option to download the song and keep it completely local so you can listen to it offline or on an entirely different platform if you want to.
-
-![Valen's illustrated unified music queue, bringing different music sources together](docs/readme/one-queue.svg)
-
-A track thats available on multiple providers appears once in search with its available sources. Playlists can be imported from service links or connected accounts
-You dont need to change your listening habits depending on whichever provider happens to have the song.
-
 ![Desktop search across music services and the Valen playlist library](docs/readme/screens/pair-search-playlists.jpg)
 
 ## a music player that looks alive.
