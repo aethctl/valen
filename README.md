@@ -1,68 +1,164 @@
-![the valen tag, drawn stroke by stroke](docs/readme/hero.svg)
-
-# NOT READY TO USE, YET.
-
-![linux + android · kotlin · compose multiplatform · spotify · youtube music · soundcloud · gpl-3.0](docs/readme/badges.svg)
-
 <p align="center">
-  <em>One player for Linux and Android — Spotify, YouTube Music, and SoundCloud in a single app.</em>
+  <img src="docs/readme/hero.svg" alt="Valen, hand-drawn in pink marker ink over a dark, moving canvas" width="100%">
 </p>
 
-Valen is a music player written once in Kotlin for Linux and Android. One queue, one now-playing screen, one library. You can throw a Spotify track between a SoundCloud set and a YouTube Music album without caring where each file came from—unless you actually want to check.
+<h1 align="center">music isn't supposed to feel static.</h1>
 
-Check out the [Roadmap (TODO.md)](TODO.md) to see what's coming next.
+<p align="center">
+  <strong>One beautifully restless place for everything you listen to.</strong>
+  <br>
+  Spotify, YouTube Music, SoundCloud, and your own files.
+  <br>
+  Made for Linux and Android. Made to feel alive.
+</p>
 
-## three services, one queue
+<p align="center">
+  <a href="#the-experience">the experience</a> &nbsp;·&nbsp;
+  <a href="#all-your-music-one-place">the music</a> &nbsp;·&nbsp;
+  <a href="#the-details">the details</a> &nbsp;·&nbsp;
+  <a href="#build-valen">build it</a>
+</p>
 
-![a marker line with a drip](docs/readme/divider.svg)
+<p align="center">
+  <img src="docs/readme/badges.svg" alt="Linux and Android, Kotlin, Compose Multiplatform, Spotify, YouTube Music, SoundCloud, GPL-3.0" width="92%">
+</p>
 
-The queue belongs to Valen. Spotify, YouTube Music, and SoundCloud sit behind a single interface, so the UI doesn't care which backend is active and no service gets to hijack your queue. Each service plays one track at a time, in the exact order you lined them up.
+<p align="center"><sub>In active development. Valen is not ready for everyday use just yet.</sub></p>
 
-Playback runs through each service's **own official player** (Spotify Web Player in a hidden Chrome instance on desktop, the YouTube Music web app, and SoundCloud's streams). No DRM is bypassed, Valen never asks for your passwords, and it doesn't store auth tokens. You log in directly on each service's page inside Valen's isolated browser profile; disconnecting wipes those cookies. Your playlists, likes, and queue stay local to Valen—nothing gets written back to your accounts.
+## the experience
+
+Valen is a music player with a personality. Not another catalogue wrapped in a sidebar, but a whole little world built around the thing you're playing.
+
+The screen takes its colour from the cover. Light drifts across the background. The player floats in glass. Album sleeves look pasted to the wall, titles write themselves into place, and moving between pages feels like changing scenes instead of opening tabs.
+
+**Every animation has a reason to exist. Even the quiet moments have something to say.**
+
+![Valen desktop home screen, showing album-led colour, handwritten details and the floating glass player](docs/readme/screens/home-desktop.jpg)
+
+<p align="center"><sub>A desktop that belongs to the music, not a streaming service.</sub></p>
+
+![Valen on Android, showing Home, the immersive player, animated lyrics and the listening recap](docs/readme/screens/phones-a.jpg)
+
+<p align="center"><sub>The same visual language, from a big desktop window to a phone in your hand.</sub></p>
+
+## all your music. one place.
+
+**Your taste doesn't stop at the edge of a streaming service. Why should your queue?**
+
+Search across Spotify, YouTube Music and SoundCloud, arrange tracks from different sources together, and listen in the order you chose. Add local files alongside them. The queue is Valen's, not any one provider's.
+
+![Valen's illustrated unified music queue, bringing different music sources together](docs/readme/one-queue.svg)
+
+A track that exists in several places appears once in search, with its available sources. Playlists can be imported from service links or connected accounts, with careful matching across providers when the original source can't play a track.
+
+No need to rebuild your listening habits around whichever app happened to have the song.
+
+![Desktop search across music services and the Valen playlist library](docs/readme/screens/pair-search-playlists.jpg)
+
+## nothing sits still.
+
+Valen's look isn't a coat of paint. Movement is part of how the interface speaks.
+
+- **Colour that follows the record.** Keep the black-and-pink signature or let the artwork set the palette. Changes ease into one another as songs change.
+- **Glass with a pulse.** Floating playback controls, a translucent dock and navigation that moves rather than simply snapping between selections.
+- **Motion with character.** Pages pour, spray, roll and settle into place. Cover art arrives like a freshly pasted poster. Titles, ink and controls have their own entrances.
+- **One design, two screens.** The same visual identity runs through the Linux desktop and Android interfaces, without forcing a desktop layout onto a phone.
+
+![Valen's full desktop now-playing view with a taped album cover and floating controls](docs/readme/screens/now-playing-desktop.jpg)
+
+<p align="center"><sub>Not a static player screen. A little stage for whatever is on.</sub></p>
+
+## get closer to the music.
+
+Lyrics aren't an afterthought tucked under a cover. Valen gives them room to breathe, with time-synced lines and word-level timing where the source provides it.
+
+![Valen's illustrated lyrics experience](docs/readme/lyrics.svg)
+
+And when the sound itself matters, there's a place to shape it. Valen's sound controls include equalizer presets and a parametric EQ, with AutoEQ support.
+
+![Valen's illustrated sound notebook and audio controls](docs/readme/notebook.svg)
+
+## the songs stay with you.
+
+A music player should remember more than the last thing you pressed play on.
+
+Valen keeps a local listening history, builds personal recommendations from what you actually finish or skip, and offers mixes and radio for when you want to discover something without starting over.
+
+Then there's **Your week**, a visual little recap of the songs and artists that followed you around.
+
+![Valen's illustrated weekly listening recap](docs/readme/week.svg)
+
+## the details
+
+| | |
+| :--- | :--- |
+| **One library, your rules** | Build local playlists, import from music services, and mix cloud and local tracks without writing changes back to your streaming accounts. |
+| **Take it offline** | Download songs and playlists, cache native streams as you listen, and find saved music in an automatic Offline playlist. |
+| **A proper queue** | Reorder what's next, combine sources, and let the next native stream prefetch while the current track plays. |
+| **Artist pages** | Explore artist information and music brought together from Spotify and YouTube Music. |
+| **Discord presence** | Show what you're listening to, with editable text, art, buttons and a live preview of your activity card. |
+| **Desktop integration** | MPRIS support for Linux media keys, player controls and desktop widgets. |
+| **Updates** | A built-in update flow for packaged Linux and Android builds, with download verification before installation. |
+| **Made in Kotlin** | A shared Compose Multiplatform interface, with desktop and Android hosts and a provider-based playback engine. |
 
 <details>
-<summary><b>how does it work??</b></summary>
+<summary><strong>more of the interface</strong> · search, playlists, profile, queue, settings and onboarding</summary>
 
-- **Spotify** runs through its official Web Player via Chrome DevTools on desktop. On Android, Spotify playback is disabled for now (`valen.android.spotify` in `gradle.properties`), so Spotify tracks fall back to YouTube Music or SoundCloud. Since the Spotify web player pauses if it thinks the tab is hidden, desktop Valen spoofs window focus so you can keep it in the background.
-- **YouTube Music and SoundCloud** run natively on both platforms without a browser: [NewPipeExtractor](https://github.com/TeamNewPipe/NewPipeExtractor) grabs the stream URL, and `ffplay` handles audio on desktop while ExoPlayer takes care of it on Android.
-- **Spotify streams are never downloaded.** The audio is DRM-protected and Spotify actively flags bulk fetching. If you save a Spotify track for offline use, Valen grabs the matching recording from YouTube Music (or SoundCloud as a fallback) using strict track-matching rules.
-- **Encrypted HLS tracks on SoundCloud are skipped in search** rather than decrypted. Valen will offer the same song from another service instead.
+<br>
+
+![Valen on Android, showing search, playlists, a personalised profile and the queue](docs/readme/screens/phones-b.jpg)
+
+![Valen desktop profile and queue screens](docs/readme/screens/pair-profile-queue.jpg)
+
+![Valen desktop settings and onboarding screens](docs/readme/screens/pair-settings-welcome.jpg)
 
 </details>
 
-## the wall
+## build valen
 
-![home on a wide window: a greeting, the playing song, the services](docs/readme/screens/home-desktop.jpg)
+Valen is **still in alpha development**. This is a look at where it's heading, not a promise of a polished release today.
 
-<p align="center"><sub>Home screen on desktop, pulling colors from the current cover art.</sub></p>
+The project is built with **Kotlin and Compose Multiplatform**. For local development you'll need **JDK 21**. The Android build also requires an Android SDK.
 
-![home, now playing, lyrics and your week on a phone](docs/readme/screens/phones-a.jpg)
+```bash
+git clone https://github.com/aethctl/valen.git
+cd valen
 
-![a marker line with a drip](docs/readme/divider.svg)
+# Linux desktop
+./gradlew :app-desktop:run
 
-## the small things
+# Android debug APK
+./gradlew :app-android:assembleDebug
+```
 
-- **Downloads.** Save any playlist or individual track right from its menu.
-- **Playlists.** Playlists live inside Valen. Paste a Spotify, YouTube Music, or SoundCloud link—or pull from a connected account—and Valen keeps the exact playable tracks, matches the rest across other services, and flags anything it couldn't find instead of playing a bad cover or remix. Re-importing updates the list in place without wiping your manual edits, and nothing ever syncs back to your cloud accounts.
-- **Disk caching.** YouTube Music and SoundCloud streams cache as you listen, and the next track pre-fetches automatically so replays start instantly. Cache caps at 3 GB on desktop and 1.5 GB on Android, evicting the oldest plays first.
-- **Offline mode.** Valen automatically maintains an "Offline" playlist containing everything currently cached or downloaded on your device. It shows up once you have a song saved, disappears if you clear everything, and can be hidden under Settings → Downloads.
-- **Local files.** Play your local audio files and mix them directly into playlists alongside cloud tracks.
-- **Self-updating.** Both clients pull updates straight from GitHub Releases. The Linux AppImage swaps itself out for the next launch, and the Android app downloads and triggers the installer in one tap. Everything is verified via SHA-256 before applying. See [RELEASING.md](RELEASING.md).
-- **Unified artist pages.** Artist views combine metadata and catalogs from Spotify and YouTube Music into one page.
-- **Discord.** Your profile can say what you're playing, and everything on that card is yours to set — the two lines (with the song's title, artist, album, service, queue place or the line being sung filled in), what the member list says, the cover and Valen's mark, the time bar, what happens when you pause, and two buttons. Settings → Discord previews the card as you change it; Discord draws the buttons for other people only.
-- **Recommendations & Radio.** Home mixes, artist mixes, and "For You" rankings adapt based on your onboarding picks, listen duration, and early skips. Hit "Start radio" on any track to keep similar music rolling.
+On Linux, native YouTube Music and SoundCloud playback needs **FFmpeg's `ffplay`**. Spotify desktop playback needs **Chrome or Chromium** for its Web Player. See [packaging](packaging/README.md) for the exact runtime requirements and [releasing](RELEASING.md) for how distributable builds are made.
 
-![a marker line with a drip](docs/readme/divider.svg)
+**One important limitation:** Spotify playback is currently disabled on Android. Valen can try to resolve matching Spotify tracks through YouTube Music or SoundCloud instead. Service availability and sign-in requirements still apply.
 
-## credit
+Follow the [roadmap](TODO.md) for what's being built next, or browse the [source](https://github.com/aethctl/valen).
 
-Valen is licensed under GPL-3.0. It builds on a lot of great open-source work (see [`NOTICE`](NOTICE) for full details):
+## built with love, and good open-source work.
 
-- **[Orpheon](https://github.com/kota-zo/Orpheon)** — Spotify Web Player plumbing, hidden-page scripts, YouTube Music integration, and the base immersive UI style (GPL-3.0).
-- **[Mochy Music](https://github.com/realidkroo/Mochy-Music)** — UI inspiration: tight semi-bold typography, full-bleed fading covers, ambient backdrops, liquid glass, the floating capsule player, queue layout, and playlist-matching logic (GPL-3.0; all code in Valen is written from scratch).
-- **[Metrolist](https://github.com/mostafaalagamy/Metrolist)** — Lyrics handling and the ported Lyprio lyrics provider (GPL-3.0).
-- **[Astra](https://github.com/Boof2015/astra)** — Parametric EQ filter model, presets, and AutoEQ parsing (GPL-3.0).
+Valen is licensed under **[GPL-3.0](LICENSE)**. Its foundations and influences deserve their flowers:
 
-Valen is not affiliated with Spotify AB, Google/YouTube, or SoundCloud.
+- **[Orpheon](https://github.com/kota-zo/Orpheon)** for Spotify Web Player integration, page scripts, YouTube Music work and the base immersive UI direction.
+- **[Mochy Music](https://github.com/realidkroo/Mochy-Music)** for visual inspiration and playlist-matching ideas. Valen's code was written from scratch.
+- **[Metrolist](https://github.com/mostafaalagamy/Metrolist)** for lyrics handling and the Lyprio lyrics provider.
+- **[Astra](https://github.com/Boof2015/astra)** for the parametric equalizer model, presets and AutoEQ parsing.
 
-*Note: LLMs were used to assist during development, though the architecture, direction, and plenty of the code are my own. If you still want to call it vibecoded, I don't really mind.*
+Full third-party attribution lives in [NOTICE](NOTICE). Valen is not affiliated with Spotify, Google, YouTube or SoundCloud.
+
+<details>
+<summary>a note about development</summary>
+
+LLMs have assisted with development. The direction, architecture and much of the implementation are human-led. The project and its dependencies remain available to inspect in the open.
+
+</details>
+
+<p align="center">
+  <img src="docs/readme/footer.svg" alt="Valen's closing illustration, signed in its hand-painted visual language" width="78%">
+</p>
+
+<p align="center">
+  <sub>made for the songs you keep coming back to.</sub>
+</p>
