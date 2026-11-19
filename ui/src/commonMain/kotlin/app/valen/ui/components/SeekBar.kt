@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -149,6 +150,10 @@ internal fun ProgressRail(
     rest: Dp = 4.dp,
     active: Dp = 6.dp,
 ) {
+    // Pointer handlers outlive recompositions. In particular, a song change replaces the
+    // callback that converts the fraction to milliseconds using that song's duration.
+    val currentOnScrub by rememberUpdatedState(onScrub)
+    val currentOnCommit by rememberUpdatedState(onCommit)
     var dragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableStateOf(value) }
     val source = rememberInteraction()
@@ -172,9 +177,9 @@ internal fun ProgressRail(
                     .pointerInput(Unit) {
                         detectTapGestures { offset ->
                             val fraction = fractionOf(offset.x, size.width)
-                            onScrub(fraction)
-                            onCommit(fraction)
-                            onScrub(null)
+                            currentOnScrub(fraction)
+                            currentOnCommit(fraction)
+                            currentOnScrub(null)
                         }
                     }
                     .pointerInput(Unit) {
@@ -182,21 +187,21 @@ internal fun ProgressRail(
                             onDragStart = { offset ->
                                 dragging = true
                                 dragValue = fractionOf(offset.x, size.width)
-                                onScrub(dragValue)
+                                currentOnScrub(dragValue)
                             },
                             onDragEnd = {
                                 dragging = false
-                                onCommit(dragValue)
-                                onScrub(null)
+                                currentOnCommit(dragValue)
+                                currentOnScrub(null)
                             },
                             onDragCancel = {
                                 dragging = false
-                                onScrub(null)
+                                currentOnScrub(null)
                             },
                             onHorizontalDrag = { change, _ ->
                                 change.consume()
                                 dragValue = fractionOf(change.position.x, size.width)
-                                onScrub(dragValue)
+                                currentOnScrub(dragValue)
                             },
                         )
                     },
