@@ -13,6 +13,10 @@ import app.valen.core.ProviderId
 import app.valen.core.ReadPlaylist
 import app.valen.core.Track
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 /** One of the web app's songs as Valen's track, with the YouTube Music cover as its artwork. */
 internal fun CatalogTrack.toValenTrack(): Track? {
@@ -75,19 +79,36 @@ class YtmusicPlaylistCatalog(
         val blocked = LinkedHashSet<String>()
         var pages = 0
         var truncated = false
+        var continuation = false
+        var targetId: String? = null
+        val seenTokens = HashSet<String>()
         while (true) {
-            for (item in playlistRows(answer).filterIsInstance<YtmParse.Item.Song>()) {
+            val shelves = playlistShelves(answer, continuation, targetId)
+            if (shelves.isEmpty()) {
+                throw IllegalStateException("YouTube Music returned an unreadable playlist page; try importing it again")
+            }
+            targetId = targetId ?: shelves.firstNotNullOfOrNull { it["targetId"]?.jsonPrimitive?.contentOrNull }
+            for (item in playlistRows(shelves).filterIsInstance<YtmParse.Item.Song>()) {
                 tracks += item.track
                 if (!item.track.playable) {
                     item.track.toValenTrack()?.let { blocked += it.key }
                 }
             }
-            val token = YtmParse.continuation(answer) ?: break
+            // Recommendations on the same page have their own continuation. Only follow the
+            // playlist's shelf, or they can replace the real next page with suggested songs.
+            val token = shelves.firstNotNullOfOrNull(YtmParse::continuation)
+                ?: (YtmParse.deep(answer, "sectionListContinuation") + YtmParse.deep(answer, "sectionListRenderer"))
+                    .firstNotNullOfOrNull { it["continuations"]?.let(YtmParse::continuation) }
+                ?: break
+            if (!seenTokens.add(token)) {
+                throw IllegalStateException("YouTube Music repeated a playlist page; try importing it again")
+            }
             if (++pages >= MAX_SONG_PAGES) {
                 truncated = true
                 break
             }
             answer = session.browseMore(token)
+            continuation = true
         }
         val name = header?.title?.takeIf { it.isNotBlank() } ?: "YouTube Music playlist"
         val mapped = tracks.mapNotNull { it.toValenTrack() }
@@ -105,13 +126,35 @@ class YtmusicPlaylistCatalog(
      * The playlist's own shelf only: a playlist page also carries a "recommended" shelf of songs,
      * and those are not part of the list even though the generic row reader would return them.
      */
-    private fun playlistRows(answer: JsonElement): List<YtmParse.Item> {
+    private fun playlistShelves(answer: JsonElement, continuation: Boolean, targetId: String?): List<JsonObject> {
         val shelves = YtmParse.deep(answer, "musicPlaylistShelfRenderer") +
             YtmParse.deep(answer, "musicPlaylistShelfContinuation")
-        return shelves.flatMap { shelf ->
-            YtmParse.deep(shelf, "musicResponsiveListItemRenderer").mapNotNull { YtmParse.row(it) }
+        if (shelves.isNotEmpty() || !continuation) return shelves
+
+        // Newer account responses append rows directly rather than returning a playlist shelf.
+        // Keep these fallbacks on continuation responses so an initial recommendations shelf
+        // can never be mistaken for the playlist itself.
+        val appended = YtmParse.deep(answer, "appendContinuationItemsAction").filter { action ->
+            val target = action["targetId"]?.jsonPrimitive?.contentOrNull
+            action["continuationItems"] is JsonArray && (targetId == null || target == null || target == targetId)
+        }
+        if (targetId == null && appended.size > 1 &&
+            appended.map { it["targetId"]?.jsonPrimitive?.contentOrNull }.toSet().let { it.size > 1 || null in it }
+        ) {
+            throw IllegalStateException("YouTube Music returned ambiguous playlist pages; try importing it again")
+        }
+        if (appended.isNotEmpty()) return appended
+        val legacy = YtmParse.deep(answer, "musicShelfContinuation")
+        if (legacy.isNotEmpty()) return legacy
+        return YtmParse.deep(answer, "sectionListContinuation").flatMap {
+            YtmParse.deep(it, "musicShelfRenderer")
         }
     }
+
+    private fun playlistRows(shelves: List<JsonObject>): List<YtmParse.Item> =
+        shelves.flatMap { shelf ->
+            YtmParse.deep(shelf, "musicResponsiveListItemRenderer").mapNotNull { YtmParse.row(it) }
+        }
 
     private fun app.myspoti.api.Playlist.toRef(): PlaylistRef? {
         val id = uri.removePrefix("${Ytm.PROVIDER}:playlist:").takeIf { it.isNotBlank() && it != uri } ?: return null
