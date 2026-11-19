@@ -119,7 +119,11 @@ valen [--width N] [--height N] [--route home|search|playlists|import|now-playing
 
 ```
 core/            Track, MusicProvider, ProviderSignIn, PlaybackCoordinator (the only UI-facing
-                 facade), Lyrics.kt (model, LyricsSource, LyricsBook), LyricsFormats.kt (TTML, MLX,
+                 facade), Taste.kt (the learned taste: evidence, trust, disliked/hidden),
+                 MixEngine.kt (SmartMixer: seeds, related-artist expansion, deep gates, quotas,
+                 spread), Listening.kt (listening log, generated provenance, stats), Artists.kt
+                 (ArtistDirectory: one artist page from every service by `artistKey`), Lyrics.kt
+                 (model, LyricsSource, LyricsBook), LyricsFormats.kt (TTML, MLX,
                  LRC readers), Recordings.kt (cross-service recording identity), Playlists.kt (the
                  app-owned playlist library), PlaylistLinks/TrackMatcher/PlaylistImporter/
                  PlaylistCatalog (import), AppSettings, settings store
@@ -551,21 +555,44 @@ empty states, purple-blue gradients, emoji icons, placeholder copy, shadows.
   `listening.json` beside the playlists.
 - **Words in the app are short and plain** (see design-spec "Words"). The only emoji is the 🥺
   on the welcome's hello, asked for by the owner.
-- **Taste and mixes live in core** (`core/Taste.kt`): `Taste` scores artists and songs from the
-  welcome's favourites, listening time (recent weeks weigh as much as all before, halving every 14
-  days) and early skips as a *rate* (`ListeningLog.skips`, recorded by `PlaybackCoordinator.next()`);
-  an artist skipped away from (3+ skips, 60 %+ of plays, never named) is left out. Artists are
-  each credited name (`Taste.creditsOf`: `artistsIn`, " - Topic"/VEVO off); a song is heard by
-  recording, from any service. `SmartMixer` searches every service from seeds and takes a song for an
-  artist seed **only when it credits that artist** (a name merely containing the seed — "Drake Bell",
-  "Anastasia" — was the "random songs"); new artists come from the artist pages' related artists
-  (`related`, more with more discovery), never from what a search returned; derivatives (covers,
-  karaoke, nightcore, slowed, 8D, loops, clips under a minute or over 12) are offered only when that
-  very upload was played. It scores by taste, an artist's best-known songs first, keeps one copy of a
-  recording, caps an artist at a quarter and spreads artists apart. Home's "For you" (made again
-  every 5 songs), artist mixes, a radio and smart playlists all go through it. A radio is refilled
-  from its last songs' artists when 3 songs are left, only while the queue is still the radio's
-  (`radioFrom`; `play()` ends it). Tests in `TasteTest` and `PlaybackCoordinatorTest`.
+- **Taste and mixes live in core** (`core/Taste.kt`, `core/MixEngine.kt`): `Taste` scores artists
+  and songs from the welcome's favourites, listening time (recent weeks weigh as much as all
+  before, halving every 14 days) and early skips as a *rate* (`ListeningLog.skips`, recorded by
+  `PlaybackCoordinator.next()`). Artists are each credited name (`Taste.creditsOf`: `artistsIn`,
+  " - Topic"/VEVO off); a song is heard by recording, from any service. `SmartMixer` builds from
+  trust-gated seeds (favourite and most-played artists that the person really listens to: a trust
+  of listening days, recordings and plays minus skips; one generated-only afternoon is not
+  evidence) in three candidate layers, and every layer is entity-exact:
+  - a **seed artist's** songs come from its merged artist page's popular tracks (`artistTop`) plus
+    the person's own loved/on-repeat recordings, **never** from an unfiltered name search — that
+    is what let SoundCloud fan uploads and the two unrelated "365MUSIC" artists in;
+  - **new artists** come from the related lists of an artist page, carried as
+    `RelatedArtist(name, provider, id, rank)` and read from that exact service page
+    (`relatedSongs`): a same-named artist on another service can never stand in for them; the
+    discovery budget is `min(0.5, 0.6 × discovery)`, so discovery 0 adds no new artist at all;
+  - **genres** search, and a stranger is only accepted when the artist page confirms they belong,
+    never from repetition alone (a name seen twice in one search can be a compilation channel; it
+    takes three hits before repetition even counts, and channel-looking names are skipped).
+  Hard gates run before scoring: hidden uploads (`AppSettings.hiddenTracks`, the song menu's
+  "Don't recommend this song"), disliked artists (`AppSettings.dislikedArtists`, "Less like this";
+  a track with an explicitly disliked credit is left out unless that very credit is named in the
+  spec — a feature does not ride in on a named collaborator), derivatives (covers, karaoke,
+  nightcore, slowed, 8D, loops, clips under a minute or over 12) only when that very upload was
+  played, a cover recognised by title (`songTitleKey`: a distinctive title heard only from other
+  acts — once a version by this act was heard too, its own upload is not a cover; this catches a
+  re-upload whose title looks ordinary), an artist skipped away from (3+
+  skips, 60 %+ of plays, never named) resting, recording dedupe, one copy per recording, at most
+  a quarter per artist, at most two songs per new artist, at least a quarter from familiar artists,
+  and a bounded served-history avoid set. Scoring keeps an artist's best-known songs first, boosts
+  love/on-repeat, penalises recent fatigue, samples seeds by weight and spreads artists apart.
+  Listening from a generated list is counted apart (`Listened.genMs/genPlays`,
+  `DayListening.genSongs`; `PlaybackCoordinator.play(..., generated = true)` for Home's "For you",
+  artist mixes, radios and saved smart mixes): it shows in the stats but feeds back into the taste
+  only as the person's own choice, so a mix cannot seed itself. Home's "For you" (made again every
+  5 songs), artist mixes, a radio and smart playlists all go through it. A radio is refilled from
+  its last songs' artists when 3 songs are left, only while the queue is still the radio's
+  (`radioFrom`; `play()` ends it). Tests in `TasteTest`, `MixEngineTest` and
+  `PlaybackCoordinatorTest`.
 - **Street marks** (`components/Street.kt`) are paint on the wall, never on chrome and never on
   text a person reads to use the app: the tag, the marker under a page title, the swipe behind the
   playing row, tape on a lone cover. Do not add a graffiti font; the tag is the owner's drawing.

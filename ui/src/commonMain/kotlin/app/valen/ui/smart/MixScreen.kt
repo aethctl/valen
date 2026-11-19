@@ -158,7 +158,7 @@ fun MixScreen(
         failure = null
         progress = 0f
         scope.launch {
-            val songs = runCatching { coordinator.mixer().build(spec(), coordinator.taste()) { progress = it } }.getOrDefault(emptyList())
+            val songs = runCatching { coordinator.mixer().build(spec(), coordinator.taste(), onProgress = { progress = it }) }.getOrDefault(emptyList())
             working = false
             result = songs
             if (songs.isEmpty()) failure = "Nothing found. Try more sources or other artists."
@@ -272,7 +272,7 @@ fun MixScreen(
                         }
                     })
                     QuietButton(label = "Play", icon = Icons.Rounded.PlayArrow, onClick = {
-                        scope.launch { coordinator.play(songs.first(), songs, from = title) }
+                        scope.launch { coordinator.play(songs.first(), songs, from = title, generated = true) }
                     })
                 }
                 Spacer(Modifier.height(Space.step4))

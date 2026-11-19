@@ -27,6 +27,13 @@ tag's version, writes `valen-release.json`, and publishes them together. The rel
 until every file is on it. A tag with `-alpha`/`-beta`/`-rc` becomes a pre-release, and only copies
 that take test builds are offered it.
 
+The release body is what the apps show under **What changed**. Write it for a tag in
+`.github/release-notes/<version>.md` (for example `.github/release-notes/1.0.0-alpha.9.md`): the
+workflow uses that file when it exists, and GitHub's generated notes otherwise. It reads like the
+update sheet: `##` lines are headings (a leading "What's Changed" is dropped), `-` lines are the
+dashed items a person reads, plain lines are smaller text, and links collapse to their label. Keep
+it short — a heading and a handful of dashes, in plain words a listener understands.
+
 Once the release is out, a second job (`flake`) points `flake.nix` on `main` at its AppImage
 (version and hash, `scripts/bump-flake.sh`). It only moves forward, so releasing an older tag
 again leaves the flake alone. NixOS machines pick it up with `nix flake update valen`.

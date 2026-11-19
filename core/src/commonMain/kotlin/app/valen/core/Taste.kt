@@ -2,9 +2,8 @@
 package app.valen.core
 
 import kotlinx.serialization.Serializable
+import kotlin.math.min
 import kotlin.math.pow
-import kotlin.math.roundToInt
-import kotlin.random.Random
 
 /** What a smart playlist is made from. */
 @Serializable
@@ -27,71 +26,243 @@ interface ArtistFollows {
 }
 
 /**
+ * One credited artist's listening, as evidence that this person really chooses them.
+ *
+ * The all-time time and plays here are the person's *own* listening: time that came out of a list
+ * Valen made ("For you", a radio, a mix) is kept apart ([genMs]) and never makes an artist look
+ * chosen, so a mix cannot seed the next mix. A song is counted once per recording, from any service.
+ */
+data class ArtistEvidence(
+    /** Time listened for real (generated-list time left out), in ms. */
+    val ms: Long = 0,
+    /** The part of the all-time listening that came from generated lists. */
+    val genMs: Long = 0,
+    /** Recency-weighted real listening: recent weeks weigh as much as all before, halving every [RECENT_HALF_DAYS]. */
+    val recentMs: Double = 0.0,
+    /** Plays here, generated-list starts left out. */
+    val plays: Int = 0,
+    /** Recordings of this artist heard for real (not only from generated lists). */
+    val songs: Int = 0,
+    /** Distinct days with a real listen of this artist ([Taste.MIN_EVIDENCE_DAY_MS] or more). */
+    val days: Int = 0,
+    /** Early skips of this artist's songs. */
+    val skips: Int = 0,
+) {
+    /** The generated share of the listening, 0 (all their own) to 1 (all from mixes). */
+    val generatedShare: Float
+        get() = if (ms + genMs <= 0L) 0f else genMs.toFloat() / (ms + genMs).toFloat()
+}
+
+/**
  * The person's taste, read from what they told Valen (favourite artists and songs) and what they
- * did (time listened, plays, songs skipped early). Scores are relative: only their order matters.
+ * did (time listened, plays, songs skipped early, songs hidden).
  *
  * An artist is known by each name a song credits ("A, B", "A feat. B": both), as [artistKey] says
  * it, so a collaboration counts for each and "Daft Punk - Topic" is Daft Punk. Recent weeks weigh as
  * much as all the time before them ([ListeningLog.daily], halving every [RECENT_HALF_DAYS] days), so
  * the taste follows what is played now. A song is heard by recording, whichever service played it.
+ *
+ * Listening from a list Valen generated is counted apart ([Listened.genMs], [DayListening.genSongs]):
+ * it shows in the stats but is not evidence of a choice, so a generated mix cannot get its own
+ * artists seeded, its own songs onto "on repeat", or its own uploads past the derivative gates.
  */
 class Taste(
     private val log: ListeningLog,
     favouriteArtists: List<String>,
     private val favouriteSongs: List<Track>,
+    /** The song menu's "Less like this": these artists are left out of everything Valen makes. */
+    dislikedArtists: List<String> = emptyList(),
+    /** The song menu's "Don't recommend this song": these uploads ([Track.key]) are never offered. */
+    hiddenTracks: List<String> = emptyList(),
 ) {
-    private val favourites = (favouriteArtists + favouriteSongs.map { it.artist }).flatMap(::creditsOf).toSet()
-    private val favouriteSongKeys = favouriteSongs.map { recordingKey(it.title, it.artist) }.toSet()
-    private val total = log.totalMs.coerceAtLeast(1).toFloat()
+    /** The artists named as favourites, as given. */
+    val favouriteArtists: List<String> = favouriteArtists.distinct()
 
-    /** All-time listening by credited artist. */
-    private val artistMs: Map<String, Long> = HashMap<String, Long>().also { out ->
+    private val favourites: Set<String> =
+        (this.favouriteArtists + favouriteSongs.map { it.artist }).flatMap(::creditsOf).toSet()
+    private val favouriteSongKeys: Set<String> =
+        favouriteSongs.map { recordingKey(it.title, it.artist) }.toSet()
+    private val hiddenKeys: Set<String> = hiddenTracks.toSet()
+    private val explicitDislikeKeys: Set<String> = dislikedArtists.map(::artistKey).filter { it.isNotEmpty() }.toSet()
+
+    /** Whether [daily] has any data at all: old logs (and unit tests) have none, and are not punished for it. */
+    private val hasDaily = log.daily.isNotEmpty()
+    private val newestDay: Long? = log.daily.keys.mapNotNull { it.toLongOrNull() }.maxOrNull()
+
+    /** All-time time by credited artist, generated included (what [ListeningLog.artists] says). */
+    private val artistTotalMs: Map<String, Long> = HashMap<String, Long>().also { out ->
         log.artists.forEach { (line, ms) -> creditsOf(line).forEach { out[it] = (out[it] ?: 0L) + ms } }
     }
 
-    /** Recent listening by credited artist, each day weighed by how long ago it was. */
+    /** The generated part of the all-time time, by credited artist. */
+    private val artistGenMs: Map<String, Long> = HashMap<String, Long>().also { out ->
+        log.songs.values.forEach { song ->
+            val gen = song.genMs
+            if (gen > 0) creditsOf(song.artist).forEach { out[it] = (out[it] ?: 0L) + gen }
+        }
+    }
+
+    /** The person's own time by credited artist: all-time minus what generated lists spent on them. */
+    private val artistMs: Map<String, Long> =
+        artistTotalMs.mapValues { (key, ms) -> (ms - (artistGenMs[key] ?: 0L)).coerceAtLeast(0L) }
+
+    private val totalGen: Long = log.songs.values.sumOf { it.genMs }
+    /** The person's own listening, in ms: [ListeningLog.totalMs] minus generated-list time. */
+    private val totalReal: Float = (log.totalMs - totalGen).coerceAtLeast(1L).toFloat()
+
+    /** All plays here by credited artist, generated starts included (for the skip rate). */
+    private val artistPlays: Map<String, Int> = HashMap<String, Int>().also { out ->
+        log.songs.values.forEach { song -> creditsOf(song.artist).forEach { out[it] = (out[it] ?: 0) + song.plays } }
+    }
+
+    /** The person's own plays, by credited artist: generated starts left out. */
+    private val artistRealPlays: Map<String, Int> = HashMap<String, Int>().also { out ->
+        log.songs.values.forEach { song ->
+            val plays = (song.plays - song.genPlays).coerceAtLeast(0)
+            creditsOf(song.artist).forEach { out[it] = (out[it] ?: 0) + plays }
+        }
+    }
+
+    /** Recordings with real listening, by credited artist. */
+    private val artistSongs: Map<String, Int> = HashMap<String, Int>().also { out ->
+        log.songs.values.forEach { song ->
+            if (song.ms - song.genMs > 0L) creditsOf(song.artist).forEach { out[it] = (out[it] ?: 0) + 1 }
+        }
+    }
+
+    private val artistSkips: Map<String, Int> = HashMap<String, Int>().also { out ->
+        log.skips.forEach { (key, n) -> log.songs[key]?.let { song -> creditsOf(song.artist).forEach { out[it] = (out[it] ?: 0) + n } } }
+    }
+
+    /** Recent real listening by credited artist, each day weighed by how long ago it was. */
     private val recentMs: Map<String, Double>
     private val recentTotal: Double
 
+    /** Distinct days with a real listen of each artist, and the days it happened on. */
+    private val artistDays: Map<String, Int>
+
+    /** Recording key of each song key in the log. */
+    private val recordingOf: Map<String, String> = log.songs.mapValues { (_, song) -> recordingKey(song.title, song.artist) }
+
+    /** Every recording heard here, from any service. */
+    private val recordingKeys: Set<String> = recordingOf.values.toSet()
+
+    /** The person's own time with each recording (generated time left out). */
+    private val recordingRealMs: Map<String, Long> = HashMap<String, Long>().also { out ->
+        log.songs.forEach { (key, song) ->
+            val real = (song.ms - song.genMs).coerceAtLeast(0L)
+            if (real > 0L) recordingOf[key]?.let { out[it] = (out[it] ?: 0L) + real }
+        }
+    }
+    private val recordingPlays: Map<String, Int> = HashMap<String, Int>().also { out ->
+        log.songs.forEach { (key, song) -> recordingOf[key]?.let { out[it] = (out[it] ?: 0) + song.plays } }
+    }
+    private val recordingSkips: Map<String, Int> = HashMap<String, Int>().also { out ->
+        log.skips.forEach { (key, n) -> (recordingOf[key] ?: key).let { out[it] = (out[it] ?: 0) + n } }
+    }
+
+    /**
+     * Distinctive titles already heard here and the credited artists of those recordings: what a
+     * cover is recognised by, even when its upload never says "cover".
+     */
+    private val knownTitles: Map<String, List<Set<String>>> = HashMap<String, MutableList<Set<String>>>().also { out ->
+        log.songs.values.forEach { song ->
+            val title = songTitleKey(song.title)
+            if (!distinctiveTitle(title)) return@forEach
+            val credits = creditsOf(song.artist).toSet()
+            if (credits.isEmpty()) return@forEach
+            out.getOrPut(title) { ArrayList() }.add(credits)
+        }
+    }
+
     init {
-        val newest = log.daily.keys.mapNotNull { it.toLongOrNull() }.maxOrNull()
         val out = HashMap<String, Double>()
         var sum = 0.0
+        val days = HashMap<String, Int>()
+        val newest = newestDay
         if (newest != null) {
             for ((day, listening) in log.daily) {
                 val age = newest - (day.toLongOrNull() ?: continue)
                 val weight = 0.5.pow(age / RECENT_HALF_DAYS)
+                val realToday = HashMap<String, Long>()
                 for ((songKey, ms) in listening.songs) {
-                    val artist = log.songs[songKey]?.artist ?: continue
-                    val w = ms * weight
-                    creditsOf(artist).forEach { out[it] = (out[it] ?: 0.0) + w }
-                    sum += w
+                    val song = log.songs[songKey] ?: continue
+                    val real = (ms - (listening.genSongs[songKey] ?: 0L)).coerceAtLeast(0L)
+                    if (real <= 0L) continue
+                    creditsOf(song.artist).forEach { key -> realToday[key] = (realToday[key] ?: 0L) + real }
+                    sum += real * weight
+                }
+                for ((key, ms) in realToday) {
+                    out[key] = (out[key] ?: 0.0) + ms * weight
+                    // A real listen of a minute or more is a day of evidence for that artist.
+                    if (ms >= MIN_EVIDENCE_DAY_MS) days[key] = (days[key] ?: 0) + 1
                 }
             }
         }
         recentMs = out
         recentTotal = sum
+        artistDays = days
     }
 
-    /** Recording key of each song key in the log. */
-    private val recordingOf: Map<String, String> = log.songs.mapValues { (_, s) -> recordingKey(s.title, s.artist) }
-    private val recordingMs: Map<String, Long> = HashMap<String, Long>().also { out ->
-        log.songs.forEach { (key, s) -> recordingOf[key]?.let { out[it] = (out[it] ?: 0L) + s.ms } }
-    }
-    private val recordingSkips: Map<String, Int> = HashMap<String, Int>().also { out ->
-        log.skips.forEach { (key, n) -> (recordingOf[key] ?: key).let { out[it] = (out[it] ?: 0) + n } }
-    }
-    private val artistPlays: Map<String, Int> = HashMap<String, Int>().also { out ->
-        log.songs.values.forEach { s -> creditsOf(s.artist).forEach { out[it] = (out[it] ?: 0) + s.plays } }
-    }
-    private val artistSkips: Map<String, Int> = HashMap<String, Int>().also { out ->
-        log.skips.forEach { (key, n) -> log.songs[key]?.let { s -> creditsOf(s.artist).forEach { out[it] = (out[it] ?: 0) + n } } }
+    private val evidenceCache = HashMap<String, ArtistEvidence>()
+
+    private fun evidenceOfKey(key: String): ArtistEvidence = evidenceCache.getOrPut(key) {
+        ArtistEvidence(
+            ms = artistMs[key] ?: 0L,
+            genMs = artistGenMs[key] ?: 0L,
+            recentMs = recentMs[key] ?: 0.0,
+            plays = artistRealPlays[key] ?: 0,
+            songs = artistSongs[key] ?: 0,
+            days = artistDays[key] ?: 0,
+            skips = artistSkips[key] ?: 0,
+        )
     }
 
-    /** One credited artist: told favourite, share of the listening (recent and all-time), less skipping. */
+    /**
+     * One artist line's listening: the best-liked credit of it, as [artistScore] reads it. An empty
+     * artist line (a channel that credits nobody) has no evidence.
+     */
+    fun evidence(artist: String): ArtistEvidence {
+        val credits = creditsOf(artist)
+        if (credits.isEmpty()) return ArtistEvidence()
+        return credits.map(::evidenceOfKey).maxWithOrNull(compareBy({ it.ms }, { it.plays }, { it.recentMs })) ?: ArtistEvidence()
+    }
+
+    /**
+     * How much this person really chose [artist], from 0 to 1: favourite artists are trusted fully;
+     * otherwise it grows with the number of days, recordings and plays they gave them, less their
+     * skip rate. A single day of listening — one generated afternoon, however many songs it added —
+     * never reaches enough to seed a mix on its own ([SEED_TRUST]).
+     */
+    fun trust(artist: String): Float = creditsOf(artist).maxOfOrNull(::trustOfKey) ?: 0f
+
+    private fun trustOfKey(key: String): Float {
+        if (key in favourites) return 1f
+        val evidence = evidenceOfKey(key)
+        if (evidence.ms <= 0L && evidence.genMs <= 0L) return 0f
+        val plays = maxOf(artistPlays[key] ?: 0, evidence.skips, 1)
+        val skipRate = (evidence.skips.toFloat() / plays).coerceIn(0f, 1f)
+        val keep = 1f - 0.5f * skipRate
+        // Old logs (and tests) predate [ListeningLog.daily]: plays and recordings are all there is,
+        // so the day term is left out rather than counted as zero.
+        if (!hasDaily) {
+            val songs = min(1f, evidence.songs / 3f)
+            val hearing = min(1f, evidence.plays / 6f)
+            return ((0.3f * songs + 0.2f * hearing) / 0.5f * keep).coerceIn(0f, 1f)
+        }
+        val raw = 0.5f * min(1f, evidence.days / 2f) +
+            0.3f * min(1f, evidence.songs / 3f) +
+            0.2f * min(1f, evidence.plays / 6f)
+        // The slop shield: one day is one session, not a taste.
+        val shielded = if (evidence.days < 2) min(raw, SEED_TRUST * 0.9f) else raw
+        return (shielded * keep).coerceIn(0f, 1f)
+    }
+
+    /** One credited artist: told favourite, share of the real listening (recent and all-time), less skipping. */
     private fun creditScore(key: String): Float {
-        val allTime = (artistMs[key] ?: 0L) / total
-        val share = if (recentTotal > 0) 0.5f * allTime + 0.5f * ((recentMs[key] ?: 0.0) / recentTotal).toFloat() else allTime
+        val allTime = (artistMs[key] ?: 0L) / totalReal
+        val recent = if (recentTotal > 0) ((recentMs[key] ?: 0.0) / recentTotal).toFloat() else 0f
+        val share = 0.5f * allTime + 0.5f * recent
         return (if (key in favourites) 3f else 0f) + share * 8f - skipPenalty(key)
     }
 
@@ -105,36 +276,6 @@ class Taste(
     /** How much this person likes [artist] (an artist line: its best-liked credit counts). */
     fun artistScore(artist: String): Float = creditsOf(artist).maxOfOrNull(::creditScore) ?: 0f
 
-    /** An artist this person keeps skipping and never named: left out of what is made for them. */
-    fun dislikes(artist: String): Boolean = creditsOf(artist).let { credits ->
-        credits.isNotEmpty() && credits.all { key ->
-            val skips = artistSkips[key] ?: 0
-            key !in favourites && skips >= 3 && skips.toFloat() / maxOf(artistPlays[key] ?: 0, skips, 1) >= 0.6f
-        }
-    }
-
-    /** How much this person likes [track]. */
-    fun songScore(track: Track): Float = artistScore(track.artist) + loved(track) - skips(track) * 0.6f
-
-    /**
-     * This very upload has been played here. A derivative's name often reads as the song's own
-     * recording ("Awake (1 hour loop)" is "Awake"), so only the upload itself makes it the person's.
-     */
-    fun played(track: Track): Boolean = log.songs.containsKey(track.key)
-
-    /** Whether this recording has been played here, from any service. */
-    fun heard(track: Track): Boolean = log.songs.containsKey(track.key) || recordingKey(track.title, track.artist) in recordingMs
-
-    /** How much [track] itself is loved, apart from its artist: time with it, and being a told favourite. */
-    fun loved(track: Track): Float {
-        val rec = recordingKey(track.title, track.artist)
-        val own = (recordingMs[rec] ?: 0L) / total * 6f
-        val favourite = if (rec in favouriteSongKeys) 2.5f else 0f
-        return own + favourite
-    }
-
-    fun skips(track: Track): Int = recordingSkips[recordingKey(track.title, track.artist)] ?: (log.skips[track.key] ?: 0)
-
     /** The artists this person likes most, told and listened, best first (never one they skip away from). */
     fun topArtists(n: Int): List<String> {
         val names = linkedMapOf<String, String>()
@@ -146,15 +287,95 @@ class Taste(
 
     private val givenNames = (favouriteArtists + favouriteSongs.map { it.artist }).flatMap(::artistsIn)
 
-    /** The songs played here this person comes back to most, by time and plays, less skips. */
+    /** The songs played here this person comes back to most: their own listening only, less skips. */
     fun onRepeat(n: Int): List<Track> = log.songs.entries
-        .filter { (log.skips[it.key] ?: 0) < it.value.plays }
-        .sortedByDescending { it.value.ms + it.value.plays * 30_000L }
-        .distinctBy { recordingOf[it.key] }
+        // A song whose listening is mostly generated was offered, not chosen: it is not a repeat.
+        .filter { (key, song) -> song.genMs * 2 <= song.ms && (log.skips[key] ?: 0) < song.plays }
+        .sortedByDescending { (_, song) -> (song.ms - song.genMs) + (song.plays - song.genPlays).coerceAtLeast(0) * 30_000L }
+        .distinctBy { (key, _) -> recordingOf[key] }
         .take(n)
         .map { (key, song) -> song.toTrack(key) }
 
     val favouriteTracks: List<Track> get() = favouriteSongs
+
+    /** This very upload has been played here. */
+    fun played(track: Track): Boolean = log.songs.containsKey(track.key)
+
+    /** Whether this recording has been played here, from any service, even from a generated list. */
+    fun heard(track: Track): Boolean = log.songs.containsKey(track.key) || recordingKey(track.title, track.artist) in recordingKeys
+
+    /** How much [track] itself is loved, apart from its artist: the person's own time with it, and being told. */
+    fun loved(track: Track): Float {
+        val rec = recordingKey(track.title, track.artist)
+        val own = (recordingRealMs[rec] ?: 0L) / totalReal * 6f
+        val favourite = if (rec in favouriteSongKeys) 2.5f else 0f
+        return own + favourite
+    }
+
+    fun skips(track: Track): Int = recordingSkips[recordingKey(track.title, track.artist)] ?: (log.skips[track.key] ?: 0)
+
+    /** Plays of [track]'s recording here (all services). */
+    fun plays(track: Track): Int = recordingPlays[recordingKey(track.title, track.artist)] ?: (log.songs[track.key]?.plays ?: 0)
+
+    /**
+     * The song behind this upload has been heard here by a *different* artist: a cover whose title
+     * says nothing about being one. The title has to be distinctive ("the eyes of ibad" is, "awake"
+     * is not) so two unrelated songs that happen to share a short name are not mistaken for it.
+     */
+    fun isCover(track: Track): Boolean {
+        val title = songTitleKey(track.title)
+        if (!distinctiveTitle(title)) return false
+        val credits = creditsOf(track.artist).toSet()
+        if (credits.isEmpty()) return false
+        val heard = knownTitles[title] ?: return false
+        // A cover only when no version heard here shares an artist with this track: once the title
+        // was heard from a different act it is a cover; if it was heard from this act too (the
+        // original and its cover are both in the log), it is not.
+        return heard.none { logCredits -> logCredits.any { it in credits } }
+    }
+
+    /** This very upload is never to be recommended again ("Don't recommend this song"). */
+    fun hidden(track: Track): Boolean = track.key in hiddenKeys
+
+    /** The song menu's named dislike for one of [artist]'s credits. */
+    fun explicitlyDisliked(artist: String): Boolean = creditsOf(artist).any { it in explicitDislikeKeys }
+
+    /**
+     * An artist this person keeps skipping and never named: left out of what is made for them
+     * ("resting"). They come back once their skip rate falls, which listening to them does.
+     */
+    fun restingArtist(artist: String): Boolean {
+        val credits = creditsOf(artist)
+        if (credits.isEmpty()) return false
+        return credits.all { key ->
+            if (key in favourites) return@all false
+            val skips = artistSkips[key] ?: 0
+            if (skips < 3) return@all false
+            val rate = skips.toFloat() / maxOf(artistPlays[key] ?: 0, skips, 1)
+            rate >= 0.6f
+        }
+    }
+
+    /** An artist explicitly hidden, inferred by skipping, or resting: left out of a generated list. */
+    fun dislikes(artist: String): Boolean = explicitlyDisliked(artist) || restingArtist(artist)
+
+    /** This upload has been heard often in the last [RESTING_DAYS] days: a mix should not repeat it yet. */
+    fun resting(track: Track): Boolean {
+        val newest = newestDay ?: return false
+        val rec = recordingKey(track.title, track.artist)
+        var plays = 0
+        for (age in 0 until RESTING_DAYS) {
+            val day = log.daily[(newest - age).toString()] ?: continue
+            for ((key, n) in day.plays) {
+                val song = log.songs[key] ?: continue
+                if (recordingKey(song.title, song.artist) == rec) plays += n
+            }
+        }
+        return plays >= RESTING_PLAYS
+    }
+
+    /** How much this person likes [track]. */
+    fun songScore(track: Track): Float = artistScore(track.artist) + loved(track) - skips(track) * 0.6f
 
     companion object {
         /** One artist's key, the same as artist pages use ([app.valen.core.artistKey]). */
@@ -173,6 +394,26 @@ class Taste(
 
         /** Days for recent listening to count half as much. */
         const val RECENT_HALF_DAYS = 14.0
+
+        /** The trust below which an artist cannot seed a mix on listening alone (one day never does). */
+        const val SEED_TRUST = 0.35f
+
+        /** A day of listening counts as evidence for an artist only when it is this long (ms). */
+        const val MIN_EVIDENCE_DAY_MS = 60_000L
+
+        /** Days back that "heard a lot lately" looks ([resting]). */
+        const val RESTING_DAYS = 3
+
+        /** Plays of a recording in those days that makes it resting. */
+        const val RESTING_PLAYS = 3
+
+        /** A title this short or generic is not enough to recognise a cover by. */
+        private fun distinctiveTitle(title: String): Boolean {
+            if (title.isEmpty()) return false
+            val chars = title.length
+            val words = title.count { it == ' ' } + 1
+            return (chars >= 6 && words >= 2) || chars >= 10
+        }
     }
 }
 
@@ -188,181 +429,3 @@ fun Listened.toTrack(key: String): Track = Track(
     uri = uri,
     link = link,
 )
-
-/**
- * Makes song lists from a taste: Home's "For you", artist mixes, a radio and smart playlists.
- *
- * Candidates come from searching the services for the seeds, and a song counts for an artist seed
- * only when it credits that very artist: a name that merely contains the seed ("Drake Bell" for
- * Drake, "Anastasia" for Sia) and someone else's upload were the "completely random songs". New
- * artists come from the ones the services call related to the seeds ([related]), never from
- * whatever a search returned. Derivatives (covers, karaoke, nightcore, slowed, 8D, hour-long loops)
- * are not offered unless already heard here. Each is scored by the taste, an artist's best-known
- * songs ahead of their rarities, with a little shuffle so the list changes; then the same recording
- * is kept once, no artist takes more than a quarter, and none plays twice in a row.
- */
-class SmartMixer(
-    private val search: suspend (String) -> List<Track>,
-    private val follows: suspend () -> List<String> = { emptyList() },
-    /** Artists the services call related to an artist (by name), best first. */
-    private val related: suspend (String) -> List<String> = { emptyList() },
-    private val random: Random = Random.Default,
-) {
-    /** The artists and genre words a [spec] asks for, artists first. */
-    suspend fun seeds(spec: SmartSpec, taste: Taste): Pair<List<String>, List<String>> {
-        val artists = buildList {
-            if (SmartSource.Favourites in spec.sources) {
-                addAll(taste.topArtists(12).filter { taste.artistScore(it) >= 3f })
-                addAll(taste.favouriteTracks.map { it.artist }.filter { !taste.dislikes(it) })
-            }
-            if (SmartSource.MostPlayed in spec.sources) addAll(taste.topArtists(8))
-            if (SmartSource.SpotifyFollows in spec.sources) addAll(runCatching { follows() }.getOrDefault(emptyList()).take(15))
-            // Named on purpose: kept even when skipped often.
-            if (SmartSource.Artists in spec.sources) addAll(spec.artists)
-        }.distinctBy(Taste::artistKey)
-        val genres = if (SmartSource.Genres in spec.sources) spec.genres.distinct() else emptyList()
-        return artists to genres
-    }
-
-    /** What the search found besides the songs: how known each song is, and which artists are new. */
-    class Context(
-        /** By recording key: 1 for an artist's first search answer, falling to 0 by the twelfth. */
-        val known: Map<String, Float> = emptyMap(),
-        /** Related artists by key, with the weight they carry in (they are not in the taste yet). */
-        val relatedArtists: Map<String, Float> = emptyMap(),
-        /** The seed artists' keys: their songs are trusted as the person's own choice. */
-        val seedArtists: Set<String> = emptySet(),
-    )
-
-    suspend fun build(spec: SmartSpec, taste: Taste, onProgress: (Float) -> Unit = {}): List<Track> {
-        val (artists, genres) = seeds(spec, taste)
-        val seedArtists = artists.take(MAX_ARTIST_SEEDS)
-        val d = spec.discovery.coerceIn(0f, 1f)
-        // Related artists, for the new: more of them the more discovery is asked for.
-        val newArtists = LinkedHashMap<String, String>()
-        val relatedCount = if (seedArtists.isEmpty()) 0 else (MAX_RELATED * d).roundToInt()
-        if (relatedCount > 0) {
-            val seedKeys = seedArtists.map(Taste::artistKey).toSet()
-            for (seed in seedArtists.take(RELATED_FROM)) {
-                runCatching { related(seed) }.getOrDefault(emptyList()).asSequence()
-                    .filter { name -> Taste.artistKey(name).let { it.isNotEmpty() && it !in seedKeys && it !in newArtists } }
-                    .filter { !taste.dislikes(it) }
-                    .take(PER_SEED_RELATED)
-                    .forEach { newArtists[Taste.artistKey(it)] = it }
-                if (newArtists.size >= relatedCount) break
-            }
-        }
-        val relatedNames = newArtists.values.take(relatedCount)
-        val queries = seedArtists.map { it to true } + relatedNames.map { it to true } + genres.take(8).map { it to false }
-        if (queries.isEmpty()) return emptyList()
-        val found = mutableListOf<Track>()
-        val known = HashMap<String, Float>()
-        queries.forEachIndexed { i, (query, isArtist) ->
-            val tracks = runCatching { search(query) }.getOrDefault(emptyList())
-            val kept = if (isArtist) {
-                val key = Taste.artistKey(query)
-                tracks.filter { key in Taste.creditsOf(it.artist) && !derivative(it, taste) }
-                    .take(if (query in relatedNames) PER_RELATED_SONGS else PER_SEED_SONGS)
-            } else {
-                tracks.filter { !derivative(it, taste) }.take(PER_SEED_SONGS)
-            }
-            kept.forEachIndexed { pos, t ->
-                known.putIfAbsent(recordingKey(t.title, t.artist), 1f - pos / PER_SEED_SONGS.toFloat())
-            }
-            found += kept
-            onProgress((i + 1f) / queries.size)
-        }
-        // Songs already loved that fit the seeds, so a mix is never only strangers.
-        val wanted = seedArtists.map(Taste::artistKey).toSet()
-        fun fits(t: Track) = wanted.isEmpty() || Taste.creditsOf(t.artist).any { it in wanted }
-        found += taste.onRepeat(40).filter(::fits)
-        found += taste.favouriteTracks.filter(::fits)
-        val context = Context(
-            known = known,
-            relatedArtists = relatedNames.associate { Taste.artistKey(it) to RELATED_WEIGHT },
-            seedArtists = wanted,
-        )
-        return pick(found, spec, taste, context)
-    }
-
-    /** Scores, dedupes and orders [candidates] into at most [SmartSpec.size] songs. */
-    fun pick(candidates: List<Track>, spec: SmartSpec, taste: Taste, context: Context = Context()): List<Track> {
-        val named = spec.artists.map(Taste::artistKey).toSet()
-        val unique = candidates.distinctBy { recordingKey(it.title, it.artist) }
-            .filter { t -> !derivative(t, taste) && (!taste.dislikes(t.artist) || Taste.creditsOf(t.artist).any { it in named }) }
-        // Discovery is a dial between "songs you love" and "songs you have not heard here": at 0 a
-        // song's own love counts fully and the familiar get a lift; at 1 its own love is set aside
-        // and the unheard get the lift. The lift is trusted only as far as the artist is: a seed or
-        // a liked artist fully, a related one mostly, a stranger (a genre's find) little.
-        val d = spec.discovery.coerceIn(0f, 1f)
-        val scored = unique.map { track ->
-            val credits = Taste.creditsOf(track.artist)
-            val liked = taste.artistScore(track.artist)
-            val relatedWeight = credits.maxOfOrNull { context.relatedArtists[it] ?: 0f } ?: 0f
-            val trust = when {
-                credits.any { it in context.seedArtists } || liked >= 1f -> 1f
-                relatedWeight > 0f -> 0.75f
-                else -> 0.35f
-            }
-            val fresh = !taste.heard(track)
-            val lift = (if (fresh) d else 1f - d) * 3f * trust
-            val known = context.known[recordingKey(track.title, track.artist)] ?: 0f
-            val score = maxOf(liked, relatedWeight) + taste.loved(track) * (1f - d) + lift + known * 0.8f -
-                taste.skips(track) * 0.6f - (if (fresh && VARIANT.containsMatchIn(track.title.lowercase())) 1f else 0f) +
-                random.nextFloat() * 0.5f
-            track to score
-        }.sortedByDescending { it.second }
-        val size = spec.size.coerceIn(1, 200)
-        val cap = (size / 4).coerceAtLeast(3)
-        val perArtist = mutableMapOf<String, Int>()
-        val chosen = scored.mapNotNull { (track, _) ->
-            val key = Taste.artistKey(track.artist)
-            val n = perArtist[key] ?: 0
-            if (n >= cap) null else track.also { perArtist[key] = n + 1 }
-        }.take(size).toMutableList()
-        // With only a few artists the cap would leave the list short: the best of the rest fill it.
-        if (chosen.size < size) chosen += scored.map { it.first }.filter { it !in chosen }.take(size - chosen.size)
-        return spread(chosen)
-    }
-
-    /** The same songs, reordered so no artist plays twice in a row where that can be helped. */
-    fun spread(tracks: List<Track>): List<Track> {
-        val left = tracks.toMutableList()
-        val out = ArrayList<Track>(tracks.size)
-        while (left.isNotEmpty()) {
-            val last = out.lastOrNull()?.let { Taste.artistKey(it.artist) }
-            val i = left.indexOfFirst { Taste.artistKey(it.artist) != last }.takeIf { it >= 0 } ?: 0
-            out += left.removeAt(i)
-        }
-        return out
-    }
-
-    companion object {
-        private const val MAX_ARTIST_SEEDS = 14
-        private const val PER_SEED_SONGS = 12
-        private const val PER_RELATED_SONGS = 5
-        /** Related artists asked for at most (at full discovery), from the first [RELATED_FROM] seeds. */
-        private const val MAX_RELATED = 8
-        private const val RELATED_FROM = 4
-        private const val PER_SEED_RELATED = 3
-        /** What a related artist starts with in place of a taste score (a told favourite is 3). */
-        private const val RELATED_WEIGHT = 1.5f
-
-        /** An upload that is not the song as released: offered only once heard here. */
-        private val DERIVATIVE = Regex(
-            """\b(cover|covered by|karaoke|nightcore|slowed|sped ?up|speed ?up|8d|type beat|reaction|tutorial|""" +
-                """lesson|backing track|1 hour|10 hours?|hour loop|full album|mashup)\b""",
-        )
-        /** A different take of a song: fine, but behind the song itself when both are new. */
-        private val VARIANT = Regex("""\b(remix|live|acoustic|demo|edit|version|instrumental|extended)\b""")
-
-        /** Too short or too long to be a song (a clip, a mix), or a derivative upload — unless heard. */
-        fun derivative(track: Track, taste: Taste): Boolean {
-            if (taste.played(track)) return false
-            val title = track.title.lowercase()
-            if (DERIVATIVE.containsMatchIn(title)) return true
-            val ms = track.durationMs
-            return ms in 1 until 60_000 || ms > 12 * 60_000
-        }
-    }
-}

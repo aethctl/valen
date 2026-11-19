@@ -78,6 +78,11 @@ class PlaybackCoordinator(
 ) {
     /** The playlist the current queue was started from, for the stats; null for anything else. */
     private var playingFrom: String? = null
+    /**
+     * The queue is a list Valen made (a mix, a radio, "For you"): the listening it gets is counted
+     * apart, so the taste never mistakes what the algorithm offered for what the person chose.
+     */
+    @Volatile private var queueGenerated = false
     private var lastTickAt = 0L
 
     /** The list's own order while shuffle has it in another; null when not shuffled. */
@@ -163,6 +168,7 @@ class PlaybackCoordinator(
                 _queue.value = saved.queue
                 _index.value = at
                 playingFrom = saved.from
+                queueGenerated = saved.generated
                 unshuffled = saved.unshuffled?.takeIf { initial.shuffle }
                 resumeAtMs = saved.positionMs.coerceAtLeast(0)
                 _snapshot.value = PlayerSnapshot(
@@ -241,7 +247,7 @@ class PlaybackCoordinator(
                 // more than a couple of seconds for one tick (a suspended machine is not listening).
                 val heard = raw.track
                 if (heard != null && raw.isPlaying && !raw.isBuffering && lastTickAt > 0 && lent == null) {
-                    stats.count(heard, (now - lastTickAt).coerceIn(0, 2_000), playingFrom)
+                    stats.count(heard, (now - lastTickAt).coerceIn(0, 2_000), playingFrom, queueGenerated)
                 }
                 lastTickAt = now
                 // The place in the song reaches disk now and then, so a crash loses seconds, not the song.
@@ -378,8 +384,10 @@ class PlaybackCoordinator(
         _index.value = -1
         _snapshot.value = null
         playingFrom = null
+        queueGenerated = false
         unshuffled = null
         resumeAtMs = null
+        radioFrom = null
         _sleep.value = null
         _settings.value = AppSettings()
         soundState.value = SoundEffects()
@@ -392,19 +400,78 @@ class PlaybackCoordinator(
     fun setFavourites(artists: List<String>, songs: List<Track>) =
         updateSettings { it.copy(favouriteArtists = artists.distinctBy(Taste::artistKey).take(50), favouriteSongs = songs.distinctBy { s -> s.key }.take(50)) }
 
-    /** The taste as it stands now: what was said, and what was played and skipped. */
-    fun taste(): Taste = Taste(stats.log.value, _settings.value.favouriteArtists, _settings.value.favouriteSongs)
+    /** The taste as it stands now: what was said, what was played and skipped, what was refused. */
+    fun taste(): Taste = Taste(
+        log = stats.log.value,
+        favouriteArtists = _settings.value.favouriteArtists,
+        favouriteSongs = _settings.value.favouriteSongs,
+        dislikedArtists = _settings.value.dislikedArtists,
+        hiddenTracks = _settings.value.hiddenTracks,
+    )
 
     /**
      * Builds song lists from the taste, searching every service and the Spotify follows; new artists
      * come from the ones the artist pages call related (kept pages first, so a page already seen
-     * costs nothing).
+     * costs nothing). A related artist is carried as the service's own id, and its songs are read
+     * from that exact page: a different artist with the same name on another service can never
+     * stand in for it.
      */
     fun mixer(): SmartMixer = SmartMixer(
         search = { query -> unifiedSearch(query).tracks },
         follows = { (byId[ProviderId.SPOTIFY] as? ArtistFollows)?.followedArtists().orEmpty() },
-        related = { name -> (artists.kept(name) ?: runCatching { artists.open(name) }.getOrNull())?.related.orEmpty().map { it.name } },
+        related = { name ->
+            val page = artists.kept(name) ?: runCatching { artists.open(name) }.getOrNull()
+            page?.related.orEmpty().mapIndexedNotNull { rank, artist ->
+                val copy = artist.copies.firstOrNull() ?: return@mapIndexedNotNull null
+                RelatedArtist(artist.name, copy.provider, copy.id, rank)
+            }
+        },
+        relatedSongs = { artist ->
+            runCatching { artists.profile(artist.provider, artist.id).topTracks }.getOrDefault(emptyList())
+        },
+        artistTop = { name ->
+            runCatching { (artists.kept(name) ?: artists.open(name)).popular }.getOrDefault(emptyList())
+        },
     )
+
+    /**
+     * The song menu's "Less like this": the artists this song credits are left out of everything
+     * Valen makes for the person, until it is undone here (or from another song of theirs).
+     */
+    fun isDisliked(track: Track): Boolean {
+        val disliked = _settings.value.dislikedArtists.mapTo(HashSet(), Taste::artistKey)
+        return Taste.creditsOf(track.artist).any { it in disliked }
+    }
+
+    /** Flips [isDisliked]: returns true when the artists are now left out. */
+    fun toggleDisliked(track: Track): Boolean {
+        val keys = Taste.creditsOf(track.artist).toSet()
+        val was = isDisliked(track)
+        updateSettings { settings ->
+            val kept = settings.dislikedArtists.filterNot { Taste.artistKey(it) in keys }
+            settings.copy(
+                dislikedArtists = (if (was) kept else kept + artistsIn(track.artist))
+                    .distinctBy(Taste::artistKey).take(200),
+            )
+        }
+        confirm(if (was) "Valen may recommend them again" else "Less like this")
+        return !was
+    }
+
+    /** Whether this very upload is never to be recommended again ("Don't recommend this song"). */
+    fun isHiddenFromMixes(track: Track): Boolean = track.key in _settings.value.hiddenTracks
+
+    /** Flips [isHiddenFromMixes]: returns true when the song is now left out. */
+    fun toggleHiddenFromMixes(track: Track): Boolean {
+        val was = isHiddenFromMixes(track)
+        updateSettings { settings ->
+            settings.copy(
+                hiddenTracks = if (was) settings.hiddenTracks - track.key else (settings.hiddenTracks + track.key).takeLast(500),
+            )
+        }
+        confirm(if (was) "This song may be recommended again" else "This song will not be recommended")
+        return !was
+    }
 
     /** Black and pink (false), or the colour of the cover that is playing (true). */
     fun setCoverColour(on: Boolean) = updateSettings { it.copy(coverColour = on) }
@@ -434,8 +501,11 @@ class PlaybackCoordinator(
     /**
      * Starts [track] inside [context] (the whole list becomes the queue). With shuffle on, the
      * chosen song plays first and the rest of the list follows in a shuffled order.
+     *
+     * [generated] says the list is one Valen made (a mix, a radio, "For you"): its listening is
+     * counted apart from what the person chose. Any other play sets it back to false.
      */
-    suspend fun play(track: Track, context: List<Track> = listOf(track), from: String? = null) {
+    suspend fun play(track: Track, context: List<Track> = listOf(track), from: String? = null, generated: Boolean = false) {
         // A new queue is no radio: it is not refilled behind the person's back.
         radioFrom = null
         // A song whose service cannot play now (a signed-out Spotify) plays from a service that
@@ -454,12 +524,13 @@ class PlaybackCoordinator(
                 if (absent) "This plays from ${copy.provider.label}"
                 else "${track.provider.label} is signed out, so this plays from ${copy.provider.label}",
             )
-            play(copy, context.map { if (it.key == track.key) copy else it }, from)
+            play(copy, context.map { if (it.key == track.key) copy else it }, from, generated)
             return
         }
         val job = commands.withLock {
             synchronized(queueLock) {
                 playingFrom = from
+                queueGenerated = generated
                 val list = if (context.any { it.key == track.key }) context else context + track
                 if (_settings.value.shuffle && list.size > 1) {
                     unshuffled = list
@@ -534,6 +605,7 @@ class PlaybackCoordinator(
             positionMs = _snapshot.value?.takeIf { it.track?.key == list[at].key }?.positionMs ?: 0L,
             from = playingFrom,
             unshuffled = unshuffled,
+            generated = queueGenerated,
         )
         updateSettings { it.copy(session = session) }
     }
@@ -946,6 +1018,7 @@ class PlaybackCoordinator(
         val playing: Boolean,
         val from: String?,
         val unshuffled: List<Track>?,
+        val generated: Boolean,
     )
 
     @Volatile private var lent: Lent? = null
@@ -967,6 +1040,7 @@ class PlaybackCoordinator(
                 playing = _active.value != null && (snap?.isPlaying == true || snap?.isBuffering == true),
                 from = playingFrom,
                 unshuffled = unshuffled,
+                generated = queueGenerated,
             )
         }
     }
@@ -1003,6 +1077,7 @@ class PlaybackCoordinator(
                 _queue.value = back.queue
                 playingFrom = back.from
                 unshuffled = back.unshuffled
+                queueGenerated = back.generated
                 when {
                     back.index !in back.queue.indices -> {
                         _index.value = -1
@@ -1194,6 +1269,8 @@ class PlaybackCoordinator(
             }
             _index.value = 0
             radioFrom = track.key
+            // The radio's queue is Valen's: what it gets played counts as offered, not chosen.
+            queueGenerated = true
             saveSession()
         }
         prepareNext(startGen)

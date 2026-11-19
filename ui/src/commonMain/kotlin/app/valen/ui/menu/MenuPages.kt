@@ -44,6 +44,8 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Downloading
+import androidx.compose.material.icons.rounded.ThumbDown
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -245,6 +247,41 @@ internal fun MainPage(
         }
         overflow.forEach { action ->
             add { MenuRow(action.icon, action.label, onClick = action.onClick) { if (action.chevron) Chevron() } }
+        }
+        // The engine's memory: leave this artist, or this very upload, out of what Valen makes.
+        // Pressed again the same row puts them back, so a slip is undone where it was made.
+        add {
+            val disliked = coordinator.isDisliked(track)
+            MenuRow(
+                icon = Icons.Rounded.ThumbDown,
+                label = if (disliked) "More like this" else "Less like this",
+                onClick = { coordinator.toggleDisliked(track); onClose() },
+            ) {
+                Text(
+                    text = if (disliked) "Left out of mixes" else track.artist,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (disliked) ValenColors.Primary else ValenColors.Text3,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        add {
+            val hidden = coordinator.isHiddenFromMixes(track)
+            MenuRow(
+                icon = Icons.Rounded.VisibilityOff,
+                label = if (hidden) "Recommend this song again" else "Don't recommend this song",
+                onClick = { coordinator.toggleHiddenFromMixes(track); onClose() },
+            ) {
+                if (hidden) {
+                    Text(
+                        text = "Left out of mixes",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = ValenColors.Primary,
+                        maxLines = 1,
+                    )
+                }
+            }
         }
         when (origin) {
             is MenuOrigin.InPlaylist -> {

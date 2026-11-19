@@ -23,6 +23,14 @@ fun List<Track>.distinctRecordings(): List<Track> =
 fun recordingKey(title: String, artist: String): String =
     "${normaliseTitle(title)}|${normaliseArtist(artist)}"
 
+/**
+ * The song behind a title: marketing and take-words aside. "Song (slowed)", "Song - Live" and
+ * "Song (Official Audio)" all come back as "song", so a cover can be recognised by its title even
+ * when it never says "cover". Used for generated lists only, never to merge a queue.
+ */
+fun songTitleKey(title: String): String =
+    normaliseTitle(title).split(' ').filter { it.isNotBlank() && !VERSIONS.containsMatchIn(it) }.joinToString(" ")
+
 /** Words that mark a different take rather than a different song. */
 private val VERSIONS = Regex(
     """\b(live|remix|rmx|acoustic|instrumental|demo|edit|reprise|sped|slowed|nightcore|karaoke|cover|unplugged)\b""",

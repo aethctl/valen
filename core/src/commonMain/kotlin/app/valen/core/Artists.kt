@@ -182,6 +182,8 @@ class ArtistDirectory(
 ) {
     private val pages = LinkedHashMap<String, Pair<ArtistView, Long>>()
     private val releases = LinkedHashMap<String, Pair<ReleaseTracks, Long>>()
+    /** One service's artist page by its own id: a name search can answer with another artist. */
+    private val profiles = LinkedHashMap<String, Pair<ArtistProfile, Long>>()
     private val lock = Any()
 
     private fun rank(p: ProviderId): Int = priority().indexOf(p).let { if (it < 0) 99 else it }
@@ -224,6 +226,21 @@ class ArtistDirectory(
 
     /** The page of [name] when it is still kept: what a page coming back shows at once. */
     fun kept(name: String): ArtistView? = cached(pages, artistKey(name), PAGE_KEEP_MS)
+
+    /**
+     * The page of one service's artist, by that service's own id: no name search, so a different
+     * artist with the same name on another service can never answer for this one. A mix uses this
+     * for a related artist: the service that called them related says exactly who they are.
+     */
+    suspend fun profile(provider: ProviderId, id: String): ArtistProfile {
+        val key = "$provider:$id"
+        cached(profiles, key, PAGE_KEEP_MS)?.let { return it }
+        val catalog = catalogs().firstOrNull { it.provider == provider }
+            ?: throw IllegalStateException("${provider.label} has no artist pages here")
+        val found = withTimeout(ASK_TIMEOUT_MS) { catalog.artist(id) }
+        remember(profiles, key, found)
+        return found
+    }
 
     /** The songs of [release] when a copy of them is still kept. */
     fun keptTracks(release: MergedRelease): ReleaseTracks? =

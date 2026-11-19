@@ -365,14 +365,15 @@ private fun PlaylistDetail(
 
     fun play() {
         val first = playable.firstOrNull() ?: return
-        scope.launch { coordinator.play(first, playable, from = playlist.name) }
+        // A saved mix is a list Valen made: its listening counts as offered, not chosen.
+        scope.launch { coordinator.play(first, playable, from = playlist.name, generated = playlist.smart != null) }
     }
 
     /** Shuffle on, from a song picked at random. */
     fun shuffle() {
         val first = shuffleFirst ?: playable.randomOrNull() ?: return
         coordinator.setShuffle(true)
-        scope.launch { coordinator.play(first, playable, from = playlist.name) }
+        scope.launch { coordinator.play(first, playable, from = playlist.name, generated = playlist.smart != null) }
     }
 
     fun rename() {
@@ -660,7 +661,7 @@ private fun PlaylistDetail(
                             accent = accent,
                             onPlay = {
                                 val start = playable.firstOrNull { it.key == track.key } ?: track
-                                scope.launch { coordinator.play(start, playable.ifEmpty { listOf(track) }, from = playlist.name) }
+                                scope.launch { coordinator.play(start, playable.ifEmpty { listOf(track) }, from = playlist.name, generated = playlist.smart != null) }
                             },
                             onEnqueue = { coordinator.enqueue(track) },
                         )

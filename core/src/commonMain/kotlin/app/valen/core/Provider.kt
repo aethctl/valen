@@ -202,6 +202,10 @@ data class AppSettings(
     /** What the person said they love, on the welcome or later: the taste starts from these. */
     val favouriteArtists: List<String> = emptyList(),
     val favouriteSongs: List<Track> = emptyList(),
+    /** Artists the person said to leave out of generated lists (the song menu's "Less like this"). */
+    val dislikedArtists: List<String> = emptyList(),
+    /** Songs the person said never to recommend ("Don't recommend this song"), by [Track.key]. */
+    val hiddenTracks: List<String> = emptyList(),
     /** Whether a list started from here plays in a shuffled order. */
     val shuffle: Boolean = false,
     /** What happens at the end of a song and of the queue. */
@@ -253,4 +257,6 @@ data class SavedSession(
     val positionMs: Long = 0L,
     val from: String? = null,
     val unshuffled: List<Track>? = null,
+    /** The queue was made by the engine (a mix, a radio, "For you"): its listening is counted apart. */
+    val generated: Boolean = false,
 )

@@ -68,6 +68,8 @@ class HomeFeed {
     internal var madeFrom: Any? = null
     internal var madeAt = 0L
     internal var madeAtPlays = 0
+    /** What "For you" has already shown lately: a rebuild prefers songs it has not offered yet. */
+    internal var shown: Set<String> = emptySet()
     var loading by mutableStateOf(false)
 }
 
@@ -105,11 +107,13 @@ fun TasteSections(coordinator: PlaybackCoordinator, startIndex: Int) {
             coordinator.mixer().build(
                 SmartSpec(sources = setOf(SmartSource.Favourites, SmartSource.MostPlayed), size = 20, discovery = 0.65f),
                 taste,
+                avoid = feed.shown,
             )
         }.getOrDefault(emptyList())
         feed.loading = false
         if (made.isNotEmpty()) {
             feed.forYou = made
+            feed.shown = (feed.shown + made.map { it.key }).toList().takeLast(120).toSet()
             feed.madeFrom = seed
             feed.madeAt = now
             feed.madeAtPlays = log.plays
@@ -130,7 +134,7 @@ fun TasteSections(coordinator: PlaybackCoordinator, startIndex: Int) {
                 ShelfCard(
                     track = track,
                     size = card,
-                    onClick = { scope.launch { coordinator.play(track, forYou, from = null) } },
+                    onClick = { scope.launch { coordinator.play(track, forYou, from = null, generated = true) } },
                     modifier = Modifier.arrive(startIndex + 1 + i, ItemArrival.Slap),
                 )
             }

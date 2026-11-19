@@ -208,7 +208,7 @@ private fun ArtistPage(coordinator: PlaybackCoordinator, page: BrowsePage.Artist
                 SmartSpec(sources = setOf(SmartSource.Artists), artists = listOf(view?.name ?: page.name), size = 25, discovery = 0.5f),
                 coordinator.taste(),
             )
-            if (songs.isNotEmpty()) coordinator.play(songs.first(), songs, from = null)
+            if (songs.isNotEmpty()) coordinator.play(songs.first(), songs, from = null, generated = true)
         }
     }
 

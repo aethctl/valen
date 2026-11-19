@@ -21,6 +21,13 @@ data class Listened(
     val durationMs: Long = 0,
     val uri: String? = null,
     val link: String? = null,
+    /**
+     * How much of [ms] (and how many of [plays]) came from a generated list ("For you", a radio, a
+     * mix) rather than from the person's own choice. Generated listening is still listening, but it
+     * must not make an artist look chosen: the taste leaves it out of seeds and of "on repeat".
+     */
+    val genMs: Long = 0,
+    val genPlays: Int = 0,
     /** When it was first heard here, epoch ms; 0 for a song counted before this was kept. */
     val first: Long = 0,
 ) {
@@ -53,6 +60,8 @@ data class DayListening(
     val plays: Map<String, Int> = emptyMap(),
     /** By hour of the local day, 0–23. */
     val hours: Map<Int, Long> = emptyMap(),
+    /** The part of [songs] that came from generated lists, by song key. */
+    val genSongs: Map<String, Long> = emptyMap(),
 )
 
 /**
@@ -141,6 +150,7 @@ class ListeningStats(
     /** Time heard but not yet added to [log]: the coordinator ticks four times a second. */
     private var pendingTrack: Track? = null
     private var pendingPlaylist: String? = null
+    private var pendingGenerated = false
     private var pendingMs = 0L
     private var pendingNewPlay = false
 
@@ -148,14 +158,19 @@ class ListeningStats(
      * Adds a slice of [ms] heard of [track]. Slices of one song are gathered and added to the log
      * every [publishEveryMs] (and when the song changes, and at [flush]): the log's maps are rebuilt
      * on each add, which four times a second is real work with a large library.
+     *
+     * [generated] is true while the slice played from a list Valen made (a mix, a radio, "For you"):
+     * it is counted, and counted apart, so the taste can tell what the person chose from what the
+     * algorithm offered.
      */
     @Synchronized
-    fun count(track: Track, ms: Long, playlist: String?) {
+    fun count(track: Track, ms: Long, playlist: String?, generated: Boolean = false) {
         if (ms <= 0) return
-        if (pendingTrack != null && pendingTrack?.key != track.key) publish()
+        if (pendingTrack != null && (pendingTrack?.key != track.key || pendingGenerated != generated)) publish()
         if (pendingTrack == null) {
             pendingTrack = track
             pendingPlaylist = playlist
+            pendingGenerated = generated
             pendingNewPlay = playing != track.key
             playing = track.key
         }
@@ -170,9 +185,11 @@ class ListeningStats(
         val ms = pendingMs
         val newPlay = pendingNewPlay
         val playlist = pendingPlaylist
+        val generated = pendingGenerated
         pendingTrack = null
         pendingMs = 0
         pendingNewPlay = false
+        pendingGenerated = false
         if (ms <= 0) return
         val now = clock()
         val log = _log.value
@@ -192,14 +209,21 @@ class ListeningStats(
                 link = it.link ?: track.link,
             )
         }
+        val genMs = if (generated) ms else 0L
+        val genPlay = if (newPlay && generated) 1 else 0
         val day = (now / 86_400_000L).toString()
         val album = track.album?.takeIf { it.isNotBlank() }?.let { it + "\u0000" + track.artist }
         _log.value = log.copy(
             since = if (log.since == 0L) now else log.since,
             totalMs = log.totalMs + ms,
             plays = log.plays + if (newPlay) 1 else 0,
-            songs = log.songs + (track.key to song.copy(ms = song.ms + ms, plays = song.plays + if (newPlay) 1 else 0)),
-            daily = daily(log.daily, track.key, ms, newPlay, now),
+            songs = log.songs + (track.key to song.copy(
+                ms = song.ms + ms,
+                plays = song.plays + if (newPlay) 1 else 0,
+                genMs = song.genMs + genMs,
+                genPlays = song.genPlays + genPlay,
+            )),
+            daily = daily(log.daily, track.key, ms, newPlay, now, generated),
             dailySince = if (log.dailySince == 0L) now else log.dailySince,
             artists = log.artists.plus(track.artist, ms),
             albums = if (album == null) log.albums else log.albums.plus(album, ms),
@@ -241,7 +265,7 @@ class ListeningStats(
     }
 
     /** [daily] with [ms] of [key] added to today, in the device's own day and hour. */
-    private fun daily(daily: Map<String, DayListening>, key: String, ms: Long, newPlay: Boolean, now: Long): Map<String, DayListening> {
+    private fun daily(daily: Map<String, DayListening>, key: String, ms: Long, newPlay: Boolean, now: Long, generated: Boolean): Map<String, DayListening> {
         val local = now + offset(now)
         val today = Math.floorDiv(local, DAY_MS)
         val hour = (Math.floorMod(local, DAY_MS) / HOUR_MS).toInt()
@@ -251,6 +275,7 @@ class ListeningStats(
             songs = day.songs.plus(key, ms),
             plays = if (newPlay) day.plays + (key to ((day.plays[key] ?: 0) + 1)) else day.plays,
             hours = day.hours.plus(hour, ms),
+            genSongs = if (generated) day.genSongs.plus(key, ms) else day.genSongs,
         ))
         // A new day is the moment to let the oldest go: once a day, not on every slice.
         return if (today.toString() in daily) next else next.filterKeys { (it.toLongOrNull() ?: 0L) > today - DAILY_KEEP_DAYS }

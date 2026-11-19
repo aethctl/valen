@@ -16,4 +16,15 @@
 - [ ] Look for bugs in the backend.
 - [x] Discord RPC settings.
 - [ ] Youtube playlist imports limited to 100 tracks.
-- [ ] Fix the algorithm throwing random slop into the queue.  
+- [x] Fix the algorithm throwing random slop into the queue.
+  - The engine is `core/Taste.kt` + `core/MixEngine.kt` now (2026-11-19): entity-exact related and
+    seed artists, corroborated discoveries, cover-by-title and derivative gates, discovery/familiar
+    quotas, trust-gated seeds, and generated-list listening counted apart so a mix cannot seed the
+    next one. The old "365MUSIC" rows were one name query merging two unrelated services' artists;
+    SoundCloud fan uploads and one-session artists cannot enter any more. See HANDOFF.md.
+  - Known limits: a noisy related list can still name a genuinely unrelated real artist (now only
+    one whose page returns songs and which is corroborated or top-ranked); the already-saved log
+    keeps its old listening as "real" (a generated mix played before this change is not marked);
+    and a `durationMs=0` upload skips the length gate (the cover-by-title gate still catches the
+    common case). "Less like this" and "Don't recommend this song" in the song menu are the manual
+    fix, kept in `AppSettings.dislikedArtists`/`hiddenTracks`.

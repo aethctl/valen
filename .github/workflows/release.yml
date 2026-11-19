@@ -114,13 +114,19 @@ jobs:
           dir="$RUNNER_TEMP/release"
           pre=""
           [[ "$VERSION" == *-* ]] && pre="--prerelease"
+          # The update sheet's "What changed": a hand-written note for this version wins; GitHub's
+          # own generated notes otherwise (see RELEASING.md).
+          notes=(--generate-notes)
+          if [ -f ".github/release-notes/$VERSION.md" ]; then
+            notes=(--notes-file ".github/release-notes/$VERSION.md")
+          fi
           if gh release view "$TAG" > /dev/null 2>&1; then
             # Released again: the manifest goes last, so the files it names are there first.
             gh release upload "$TAG" --clobber "$dir"/Valen-*
             gh release upload "$TAG" --clobber "$dir/valen-release.json"
           else
             gh release create "$TAG" --draft --verify-tag $pre \
-              --title "Valen $VERSION" --generate-notes \
+              --title "Valen $VERSION" "${notes[@]}" \
               "$dir"/Valen-* "$dir/valen-release.json"
             gh release edit "$TAG" --draft=false
           fi

@@ -826,4 +826,58 @@ class PlaybackCoordinatorTest {
         assertEquals(false, coordinator.playWithEffects(nowhere))
         assertEquals("Not found on SoundCloud", coordinator.notice.value)
     }
+
+    /** Two stores over one kept JSON string: one writes, one reads the saved settings back. */
+    private fun recordingSettings(): Pair<SettingsStore, SettingsStore> {
+        var json: String? = null
+        fun store() = SettingsStore(read = { json }, write = { json = it })
+        return store() to store()
+    }
+
+    @Test
+    fun `a generated queue is saved as generated, and a chosen song clears it`() = runTest {
+        val spotify = FakeProvider(ProviderId.SPOTIFY)
+        val (store, saved) = recordingSettings()
+        val coordinator = PlaybackCoordinator(listOf(spotify), backgroundScope, store)
+        val mix = listOf(track(ProviderId.SPOTIFY, "m1"), track(ProviderId.SPOTIFY, "m2"))
+
+        coordinator.play(mix.first(), mix, generated = true)
+        assertEquals(true, saved.load().session?.generated, "a mix's session says it was generated")
+
+        coordinator.play(track(ProviderId.SPOTIFY, "own"))
+        assertEquals(false, saved.load().session?.generated, "a song the person chose is their own")
+    }
+
+    @Test
+    fun `a restored generated session stays generated, and lending puts it back`() = runTest {
+        val spotify = FakeProvider(ProviderId.SPOTIFY)
+        val savedQueue = listOf(track(ProviderId.SPOTIFY, "m1"), track(ProviderId.SPOTIFY, "m2"))
+        val (store, saved) = recordingSettings()
+        val coordinator = PlaybackCoordinator(
+            listOf(spotify),
+            backgroundScope,
+            store,
+            initial = AppSettings(session = SavedSession(savedQueue, 0, generated = true)),
+        )
+        coordinator.saveSession()
+        assertEquals(true, saved.load().session?.generated, "a restored mix session is still generated")
+
+        // Borrowed by the recap and given back: the generated flag comes back with the queue.
+        coordinator.lend()
+        coordinator.giveBack()
+        coordinator.saveSession()
+        assertEquals(true, saved.load().session?.generated, "giveBack restores the generated flag")
+        assertEquals(savedQueue.map { it.key }, coordinator.queue.value.map { it.key })
+    }
+
+    @Test
+    fun `a radio's queue is generated once its songs are found`() = runTest {
+        val spotify = FakeProvider(ProviderId.SPOTIFY)
+        val (store, saved) = recordingSettings()
+        val coordinator = PlaybackCoordinator(listOf(spotify), backgroundScope, store)
+        val seed = track(ProviderId.SPOTIFY, "seed")
+        coordinator.startRadio(seed)
+        assertTrue(coordinator.queue.value.size >= 1, "the radio starts from its seed")
+        assertEquals(true, saved.load().session?.generated, "a radio queue is Valen's, so it is saved as generated")
+    }
 }
