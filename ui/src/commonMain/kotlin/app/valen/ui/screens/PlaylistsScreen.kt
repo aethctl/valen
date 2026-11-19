@@ -335,7 +335,8 @@ private fun PlaylistDetail(
     val snapshot by coordinator.nowPlaying.collectAsState()
     val playingKey = snapshot?.track?.key
     val accent = ArtworkPalette.tones(snapshot?.track?.artworkUrl).bright
-    val coverTones = ArtworkPalette.tones(coverOf(playlist))
+    // The playlist's backdrop belongs to its cover, even when the app uses black and pink.
+    val coverTones = ArtworkPalette.measured(coverOf(playlist)) ?: ArtworkPalette.Neutral
 
     var progress by remember(playlist.id) { mutableStateOf<ImportProgress?>(null) }
     var failure by remember(playlist.id) { mutableStateOf<String?>(null) }
@@ -482,6 +483,7 @@ private fun PlaylistDetail(
                                 size = if (chrome.compact) 112.dp else 200.dp,
                                 shape = Radii.artworkShape,
                                 iconSize = 40.dp,
+                                measure = true,
                             )
                             Column(
                                 modifier = Modifier

@@ -873,6 +873,63 @@ class ShellSmokeTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Timeout(120)
+    fun `an opened playlist measures its own cover without playing a song`() {
+        val palette = app.valen.ui.artwork.ArtworkPalette
+        val out = java.io.File("build/screens/playlist-palette").also { it.mkdirs() }
+        val covers = listOf(0x2468CC, 0x26964C, 0xCE9228, 0x28A6A6).mapIndexed { index, rgb ->
+            val file = java.io.File(out, "cover-$index.png")
+            val image = java.awt.image.BufferedImage(64, 64, java.awt.image.BufferedImage.TYPE_INT_RGB)
+            for (y in 0 until 64) for (x in 0 until 64) image.setRGB(x, y, rgb)
+            javax.imageio.ImageIO.write(image, "png", file)
+            file.toURI().toString()
+        }
+        try {
+            for ((index, dimensions) in listOf(1600 to 900, 2200 to 1200, 390 to 844).withIndex()) {
+                palette.clear()
+                val (width, height) = dimensions
+                inApp(width, height) { coordinator, playlists ->
+                    coordinator.setCoverColour(index != 2)
+                    val songs = (if (index == 2) covers else covers.take(1)).mapIndexed { n, url ->
+                        Track(ProviderId.YOUTUBE_MUSIC, "cover-$n", "Song $n", "Artist", artworkUrl = url)
+                    }
+                    val ownCover = covers[1].takeIf { index == 1 }
+                    val playlist = runBlocking { playlists.library.add("Cover colours", songs, artworkUrl = ownCover) }
+                    val expected = ownCover ?: covers.first()
+                    setContent { ValenApp(coordinator, playlists, "playlists") }
+                    settle()
+                    assertTrue(!palette.known(expected), "the shelf must not measure every cover")
+                    onNodeWithText(playlist.name).performClick()
+                    settleUntil(5_000) { palette.known(expected) }
+                    assertTrue(palette.known(expected), "opening a playlist must measure its header cover")
+                    assertTrue(palette.measured(expected)?.accent != palette.Fallback)
+                    assertEquals(null, coordinator.nowPlaying.value, "colour needs no playing song")
+                    if (index == 2) {
+                        assertTrue(covers.drop(1).none(palette::known), "only the mosaic's representative cover is measured")
+                    }
+                    settle(1_500)
+                    javax.imageio.ImageIO.write(onRoot().captureToImage().toAwtImage(), "png",
+                        java.io.File(out, "playlist-${width}x$height.png"))
+                    coordinator.setCoverColour(false)
+                    settle(1_500)
+                    assertEquals(palette.Neutral, palette.tones(expected), "global artwork colours remain off")
+                    assertEquals(palette.Neutral.bright, app.valen.ui.theme.ValenColors.Primary)
+                    val blackAndPink = onRoot().captureToImage().toAwtImage()
+                    val background = java.awt.Color(blackAndPink.getRGB((width * 0.75).toInt(), 60))
+                    val coverChannel = if (index == 1) background.green else background.blue
+                    assertTrue(coverChannel > background.red,
+                        "the playlist background must keep its cover colour in black and pink: $background")
+                    javax.imageio.ImageIO.write(blackAndPink, "png",
+                        java.io.File(out, "playlist-black-pink-${width}x$height.png"))
+                }
+            }
+        } finally {
+            palette.clear()
+            palette.followCover = false
+        }
+    }
+
+    @Test
     fun `a playlist is made on the shelf, filled from its own search, renamed, and its menu opens as a sheet on a phone`() {
         inApp(1600, 900) { coordinator, playlists ->
             setContent { ValenApp(coordinator, playlists) }

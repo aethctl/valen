@@ -37,6 +37,8 @@ fun PlaylistCover(
     shape: Shape,
     modifier: Modifier = Modifier,
     iconSize: Dp = 32.dp,
+    /** Only the opened playlist's header measures a cover; shelf tiles and rows do not. */
+    measure: Boolean = false,
 ) {
     when {
         playlist.isLiked -> LikedCover(size = size, shape = shape, modifier = modifier)
@@ -51,6 +53,8 @@ fun PlaylistCover(
                                 shape = RectangleShape,
                                 contentDescription = null,
                                 iconSize = iconSize / 2,
+                                // The wash uses coverOf(), the mosaic's first image.
+                                measure = measure && row == 0 && col == 0,
                                 modifier = Modifier.weight(1f).fillMaxSize(),
                             )
                         }
@@ -63,6 +67,7 @@ fun PlaylistCover(
             shape = shape,
             contentDescription = null,
             iconSize = iconSize,
+            measure = measure,
             modifier = modifier.size(size),
         )
     }

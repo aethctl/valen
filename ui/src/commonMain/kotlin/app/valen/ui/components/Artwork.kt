@@ -40,7 +40,7 @@ import kotlinx.coroutines.withContext
  * image arrives, then a 320ms crossfade.
  *
  * With [measure] on, the same load also works out the artwork's tones for the screen's wash and
- * the player's tint. Only covers of the song that is playing ask for that.
+ * the player's tint. Only covers that tint the current song or opened page ask for that.
  */
 @Composable
 fun Artwork(

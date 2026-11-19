@@ -196,8 +196,8 @@ internal fun Color.atLuma(target: Float): Color {
 /**
  * Tones by artwork URL. A state map, so whatever is showing a wash re-tints the moment the colour
  * is known, and a track played again does not decode twice. Only artwork that can become the
- * screen's accent is measured (the dock, the mini player, the hero, the stage), so the map holds
- * one entry per song played, not one per search result.
+ * screen's accent is measured (the dock, the mini player, the hero, the stage, an opened page),
+ * so the map holds played or opened covers, not every search result or shelf tile.
  */
 object ArtworkPalette {
     val Fallback = Tonal.DefaultSeed
