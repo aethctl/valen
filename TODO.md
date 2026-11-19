@@ -15,7 +15,7 @@
 - [ ] Ad blocker for Spotify (maybe with a Go daemon?).
 - [ ] Look for bugs in the backend.
 - [x] Discord RPC settings.
-- [ ] Youtube playlist imports limited to 100 tracks.
+- [x] Youtube playlist imports limited to 100 tracks.
     
 - [x] Fix the algorithm throwing random slop into the queue.
   - Near-rewrite
