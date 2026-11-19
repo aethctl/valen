@@ -2,15 +2,6 @@
   <img src="docs/readme/hero.svg" alt="Valen, hand-drawn in pink marker ink over a dark, moving canvas" width="100%">
 </p>
 
-<h1 align="center">music isn't static.</h1>
-
-<p align="center">
-  <strong>One place for everything you listen to.</strong>
-  <br>
-  Spotify, YouTube Music, SoundCloud, and your own files.
-  <br>
-  Made for Linux and Android.
-</p>
 
 <p align="center">
   <a href="#the-experience">the experience</a> &nbsp;·&nbsp;
@@ -19,9 +10,6 @@
   <a href="#build-valen">build it</a>
 </p>
 
-<p align="center">
-  <img src="docs/readme/badges.svg" alt="Linux and Android, Kotlin, Compose Multiplatform, Spotify, YouTube Music, SoundCloud, GPL-3.0" width="92%">
-</p>
 
 ## the experience
 
