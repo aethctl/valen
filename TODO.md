@@ -8,7 +8,7 @@
 - [ ] Fix the bottom island.
 - [ ] Floating lyrics like Mochy.
 - [ ] An anime mascot.
-- [ ] Search bar for the playlist import page.
+- [x] Search bar for the playlist import page.
 - [x] Fix some songs skipping.
 - [ ] A better lyrics API, or fix Lyperia drifting.
 - [ ] Better UI/UX and much cooler animations.

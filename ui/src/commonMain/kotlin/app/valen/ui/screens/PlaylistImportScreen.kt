@@ -60,6 +60,7 @@ import app.valen.ui.components.PlaylistRow
 import app.valen.ui.components.PrimaryButton
 import app.valen.ui.components.ProgressRail
 import app.valen.ui.components.QuietButton
+import app.valen.ui.components.SearchField
 import app.valen.ui.components.SectionHeader
 import app.valen.ui.components.SkeletonRows
 import app.valen.ui.theme.Layout
@@ -99,6 +100,8 @@ fun PlaylistImportScreen(
     var choices by remember { mutableStateOf<PlaylistChoices?>(null) }
     var loading by remember { mutableStateOf(false) }
     var reload by remember { mutableIntStateOf(0) }
+    // The lists under "From your accounts" can be many; their names are typed at.
+    var query by remember { mutableStateOf("") }
 
     LaunchedEffect(provider, reload) {
         val asked = provider ?: return@LaunchedEffect
@@ -268,6 +271,13 @@ fun PlaylistImportScreen(
                     modifier = Modifier.widthIn(max = 560.dp),
                 )
                 Spacer(Modifier.height(Space.step3))
+                SearchField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = "Search playlists",
+                    onClear = { query = "" },
+                )
+                Spacer(Modifier.height(Space.step3))
                 if (readable.size > 1) {
                     FilterChips(
                         options = readable,
@@ -282,6 +292,7 @@ fun PlaylistImportScreen(
                     choices = choices,
                     loading = loading,
                     busy = busy,
+                    query = query,
                     session = provider?.let { sessions[it] },
                     onSignIn = { provider?.let { id -> scope.launch { coordinator.connect(id) } } },
                     onRetry = { reload++ },
@@ -300,6 +311,7 @@ private fun AccountLists(
     choices: PlaylistChoices?,
     loading: Boolean,
     busy: Boolean,
+    query: String,
     session: SessionState?,
     onSignIn: () -> Unit,
     onRetry: () -> Unit,
@@ -308,6 +320,8 @@ private fun AccountLists(
     val service = provider ?: return
     val error = choices?.error
     val lists = choices?.playlists.orEmpty()
+    val typed = query.trim()
+    val matching = if (typed.isEmpty()) lists else lists.filter { listMatches(it, typed) }
     when {
         loading -> SkeletonRows(count = 3)
         error != null -> {
@@ -325,8 +339,13 @@ private fun AccountLists(
             style = MaterialTheme.typography.bodyMedium,
             color = ValenColors.Text3,
         )
+        matching.isEmpty() -> Text(
+            text = "No playlists match “$typed”.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = ValenColors.Text3,
+        )
         else -> Group(
-            rows = lists.map { ref ->
+            rows = matching.map { ref ->
                 {
                     PlaylistRow(
                         name = ref.name,
@@ -350,6 +369,11 @@ private fun AccountLists(
         )
     }
 }
+
+/** A list is found by its name or by whose it is, whichever part of it a person remembers. */
+internal fun listMatches(ref: PlaylistRef, query: String): Boolean =
+    ref.name.contains(query, ignoreCase = true) ||
+        ref.owner?.contains(query, ignoreCase = true) == true
 
 /** What one import left behind, said plainly and with the way back to the lists. */
 @Composable
