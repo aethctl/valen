@@ -299,7 +299,7 @@ class NativePlayback(
                     if (gen != generation.get()) return
                     synchronized(publishing) { fromKept = kept; fromDisk = offline != null }
                     try {
-                        player.play(stream.withDurationOf(track), at)
+                        player.play(stream.withDurationOf(track, fromCache = offline != null), at)
                         if (offline == null && mayCache(track, stream)) cache?.keep(key, stream, playing = true)
                     } catch (e: CancellationException) {
                         throw e
@@ -333,9 +333,9 @@ class NativePlayback(
     }
 
     /** A cache entry can omit metadata; keep the catalogue's length at the sink too. */
-    private fun ResolvedStream.withDurationOf(track: Track): ResolvedStream {
+    private fun ResolvedStream.withDurationOf(track: Track, fromCache: Boolean = false): ResolvedStream {
         val timed = if (durationMs > 0 || track.durationMs <= 0) this else copy(durationMs = track.durationMs)
-        return if (mayCache(track, timed)) timed else timed.copy(cacheKey = null)
+        return if (fromCache || mayCache(track, timed)) timed else timed.copy(cacheKey = null)
     }
 
     private fun mayCache(track: Track, stream: ResolvedStream): Boolean =
@@ -405,11 +405,12 @@ class NativePlayback(
             val gen = generation.get()
             val at = s.positionMs
             _snapshot.value = _snapshot.value?.copy(isPlaying = true, isBuffering = true)
-            val stream = cache?.offline(keyOf(track))
+            val offline = cache?.offline(keyOf(track))
+            val stream = offline
                 ?: runCatching { streamOf(idOf(track)).first.copy(cacheKey = keyOf(track)) }.getOrNull()
             if (stream != null && gen == generation.get()) {
                 try {
-                    handing.withLock { if (gen == generation.get()) player.play(stream.withDurationOf(track), at) }
+                    handing.withLock { if (gen == generation.get()) player.play(stream.withDurationOf(track, fromCache = offline != null), at) }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
