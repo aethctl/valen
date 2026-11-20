@@ -518,9 +518,11 @@ class NativePlayback(
     }
 
     private fun rememberStream(key: String, stream: ResolvedStream) {
-        streams[key] = stream to clock()
-        if (streams.size > STREAMS_KEPT) {
-            streams.entries.minByOrNull { it.value.second }?.let { streams.remove(it.key, it.value) }
+        synchronized(streams) {
+            streams[key] = stream to clock()
+            while (streams.size > STREAMS_KEPT) {
+                streams.entries.minByOrNull { it.value.second }?.let { streams.remove(it.key) }
+            }
         }
     }
 
