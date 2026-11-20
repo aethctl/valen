@@ -219,6 +219,12 @@ data class AppSettings(
     val session: SavedSession? = null,
     /** Keep the screen awake while the player is open (where the platform allows it). */
     val keepScreenOn: Boolean = false,
+    /**
+     * Nothing about what is listened to is counted while this is on: no stats, no weekly recap, no
+     * new taste for the mixes, and no Discord card. Playback itself is unchanged, and what was
+     * already counted stays (the switch stops the counting, it does not erase it).
+     */
+    val privateMode: Boolean = false,
     /** Whether the library shows "Offline": every song downloaded or kept whole by the cache. */
     val offlineList: Boolean = true,
     /** The stage shows the song's words beside (or instead of) its cover. */

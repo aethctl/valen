@@ -270,6 +270,13 @@ Key invariants:
   added up. The day bars take the larger of the local day and the older UTC `days`. The Home and
   profile card shows by itself on Sunday and Monday (`recapDue`), or every day with Settings →
   Test (`AppSettings.recapAlways`); the story itself never opens on its own.
+- **Private mode stops the counting, not the player.** `AppSettings.privateMode` — the eye with a
+  line through it at the foot of the side panel, and Settings → Playback's first switch — gates
+  every write that records listening: the 250 ms tick does not `stats.count`, `next()` holds no
+  early skip, and `DiscordPresence` clears its card and rests at `Off` (its wait follows the whole
+  `AppSettings`, so the switch wakes it). The taste, the stats and "Your week" are made from that
+  log, so while it is on they freeze rather than reset; what was counted before the switch stays.
+  Playback, the queue, the saved session, playlists, search, downloads and MPRIS are untouched.
 - **On a phone the catalogue's pages are a page of the wall, not a sheet.** `PhoneApp` shows
   `Route.Artist` inside the `Wall` while it is in `nav.over`, so the mini player and the tab bar float
   over an artist, a release or a service's playlist as over any place (they used to be a

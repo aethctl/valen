@@ -460,6 +460,43 @@ class PlaybackCoordinatorTest {
     }
 
     @Test
+    fun `private mode counts no listening and holds no skip, and the switch is kept`() = runTest {
+        var stored: String? = null
+        val store = SettingsStore(read = { stored }, write = { stored = it })
+        val spotify = FakeProvider(ProviderId.SPOTIFY)
+        val coordinator = PlaybackCoordinator(listOf(spotify), backgroundScope, store)
+        val a = track(ProviderId.SPOTIFY, "a")
+        val b = track(ProviderId.SPOTIFY, "b")
+
+        // What was counted before the switch stays; nothing after it is added.
+        coordinator.stats.count(a, 3_000, "Night drive")
+        coordinator.setPrivateMode(true)
+        assertEquals(true, SettingsStore(read = { stored }, write = {}).load().privateMode)
+
+        coordinator.play(a, listOf(a, b))
+        testScheduler.advanceTimeBy(2_000)
+        testScheduler.runCurrent()
+        coordinator.stats.flush()
+        assertEquals(3_000L, coordinator.stats.log.value.totalMs, "private mode added no listening")
+
+        // Leaving it in its first seconds is not held against it either.
+        coordinator.next()
+        testScheduler.advanceTimeBy(1_000)
+        testScheduler.runCurrent()
+        assertEquals(emptyMap<String, Int>(), coordinator.stats.log.value.skips)
+
+        // Off again, the same listening counts and an early skip is held.
+        coordinator.setPrivateMode(false)
+        testScheduler.advanceTimeBy(2_000)
+        testScheduler.runCurrent()
+        coordinator.stats.flush()
+        assertTrue(coordinator.stats.log.value.totalMs > 3_000L, "listening counts again")
+        coordinator.next()
+        assertEquals(1, coordinator.stats.log.value.skips[b.key])
+        assertEquals(false, SettingsStore(read = { stored }, write = {}).load().privateMode)
+    }
+
+    @Test
     fun `shuffle plays the chosen song first, keeps every song once, and off puts the order back`() = runTest {
         val spotify = FakeProvider(ProviderId.SPOTIFY)
         val coordinator = PlaybackCoordinator(listOf(spotify), backgroundScope, settings())

@@ -276,8 +276,11 @@ class PlaybackCoordinator(
                 _snapshot.value = raw.copy(track = asShown(raw.track), positionMs = position, volume = _settings.value.volume)
                 // Only time the song really played counts: not paused, not buffering, and never
                 // more than a couple of seconds for one tick (a suspended machine is not listening).
+                // Private mode stops the counting, not the music.
                 val heard = raw.track
-                if (heard != null && raw.isPlaying && !raw.isBuffering && lastTickAt > 0 && lent == null) {
+                if (heard != null && raw.isPlaying && !raw.isBuffering && lastTickAt > 0 && lent == null &&
+                    !_settings.value.privateMode
+                ) {
                     stats.count(heard, (now - lastTickAt).coerceIn(0, 2_000), playingFrom, queueGenerated || heard.key in offered)
                 }
                 lastTickAt = now
@@ -1056,10 +1059,11 @@ class PlaybackCoordinator(
 
     /** What [next] does, decided under the locks: a job to wait on when a song starts. */
     private fun decideNext(auto: Boolean, failed: Boolean = false): Job? {
-        // A song left in its first 30 s (or first 40 %) by hand counts against it in the taste.
+        // A song left in its first 30 s (or first 40 %) by hand counts against it in the taste,
+        // unless private mode is on: then no skip is held against anything.
         val snap = _snapshot.value
         val leaving = snap?.track
-        if (!auto && leaving != null && lent == null) {
+        if (!auto && leaving != null && lent == null && !_settings.value.privateMode) {
             val early = minOf(30_000L, (snap.durationMs.takeIf { it > 0 } ?: Long.MAX_VALUE) * 2 / 5)
             if (snap.positionMs < early) stats.skip(leaving)
         }
@@ -1308,6 +1312,16 @@ class PlaybackCoordinator(
     fun sleepRemainingMs(): Long? = (_sleep.value as? SleepTimer.At)?.let { (it.endsAt - clock()).coerceAtLeast(0) }
 
     fun setKeepScreenOn(on: Boolean) = updateSettings { it.copy(keepScreenOn = on) }
+
+    /**
+     * Private mode: while it is on, nothing about what is listened to is counted — no stats, no
+     * "Your week", no new taste for the mixes, no Discord card. The music itself is untouched, and
+     * what was already counted stays.
+     */
+    fun setPrivateMode(on: Boolean) {
+        updateSettings { it.copy(privateMode = on) }
+        confirm(if (on) "Private mode on — nothing is counted" else "Private mode off — listening counts again")
+    }
 
     /** Settings → Test: the "Your week" card at any time, not only at the end of the week. */
     fun setRecapAlways(on: Boolean) = updateSettings { it.copy(recapAlways = on) }

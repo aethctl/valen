@@ -403,6 +403,8 @@ private fun WideApp(
             onNavigate = nav::open,
             profileName = settings.profileName,
             avatar = settings.avatar,
+            privateMode = settings.privateMode,
+            onPrivateMode = coordinator::setPrivateMode,
             condensed = rail,
             modifier = Modifier
                 .align(Alignment.CenterStart)

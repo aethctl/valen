@@ -439,7 +439,9 @@ private fun PartSummary(part: SettingsPart, coordinator: PlaybackCoordinator, co
                 first?.let { "${it.label} first" },
             ).joinToString(" · ")
         }
-        SettingsPart.Playback -> "${settings.quality.label} quality · lyrics ${if (settings.lyrics) "on" else "off"}"
+        SettingsPart.Playback ->
+            if (settings.privateMode) "Private mode · ${settings.quality.label} quality"
+            else "${settings.quality.label} quality · lyrics ${if (settings.lyrics) "on" else "off"}"
         SettingsPart.Look -> if (settings.coverColour) "From the cover" else "Black and pink"
         SettingsPart.Downloads -> {
             val shelf = coordinator.offline
@@ -453,6 +455,7 @@ private fun PartSummary(part: SettingsPart, coordinator: PlaybackCoordinator, co
         SettingsPart.Discord -> {
             val status = coordinator.presence?.status?.collectAsState()?.value
             when {
+                settings.privateMode -> "Off by private mode"
                 !settings.presence.enabled -> "Off"
                 status is PresenceStatus.Connected -> "Showing on Discord"
                 status == PresenceStatus.NoDiscord -> "On · Discord is not open"
@@ -540,25 +543,41 @@ private fun ServicesPart(coordinator: PlaybackCoordinator) {
 private fun PlaybackPart(coordinator: PlaybackCoordinator) {
     val scope = LocalAppScope.current
     val settings by coordinator.settings.collectAsState()
-    SectionHeader(title = "Audio quality", modifier = Modifier.arrive(1, ItemArrival.Swing))
+    SectionHeader(title = "Listening", modifier = Modifier.arrive(1, ItemArrival.Swing))
+    Group(
+        listOf {
+            SwitchRow(
+                title = "Private mode",
+                body = "Nothing about what you listen to is counted: no stats, no recap, no new " +
+                    "taste for the mixes, no Discord card. Playback is unchanged, and what was " +
+                    "already counted stays.",
+                checked = settings.privateMode,
+                onChange = coordinator::setPrivateMode,
+            )
+        },
+        modifier = Modifier.arrive(2),
+    )
+
+    Spacer(Modifier.height(Space.step8))
+    SectionHeader(title = "Audio quality", modifier = Modifier.arrive(3, ItemArrival.Swing))
     Note(
         when (settings.quality) {
             AudioQuality.AUTO -> "Each service picks the best stream it can currently deliver."
             AudioQuality.STANDARD -> "Asks every service for its standard stream."
             AudioQuality.HIGH -> "Asks every service for the highest stream your account allows."
         },
-        Modifier.arrive(2),
+        Modifier.arrive(4),
     )
     SegmentedFilter(
         options = AudioQuality.entries,
         selected = settings.quality,
         onSelect = { quality -> scope.launch { coordinator.setQuality(quality) } },
         label = { it.label },
-        modifier = Modifier.arrive(3),
+        modifier = Modifier.arrive(5),
     )
 
     Spacer(Modifier.height(Space.step8))
-    SectionHeader(title = "The queue", modifier = Modifier.arrive(4, ItemArrival.Swing))
+    SectionHeader(title = "The queue", modifier = Modifier.arrive(6, ItemArrival.Swing))
     Group(
         listOf(
             {
@@ -570,15 +589,15 @@ private fun PlaybackPart(coordinator: PlaybackCoordinator) {
                 )
             },
         ),
-        modifier = Modifier.arrive(5),
+        modifier = Modifier.arrive(7),
     )
 
     Spacer(Modifier.height(Space.step8))
-    SectionHeader(title = "Lyrics", modifier = Modifier.arrive(6, ItemArrival.Swing))
+    SectionHeader(title = "Lyrics", modifier = Modifier.arrive(8, ItemArrival.Swing))
     Note(
         "Words come from Lyprio when it is set up, then from Spotify when you are signed in, " +
             "then from LRCLIB.",
-        Modifier.arrive(7),
+        Modifier.arrive(9),
     )
     Group(
         listOf(
@@ -607,7 +626,7 @@ private fun PlaybackPart(coordinator: PlaybackCoordinator) {
                 )
             },
         ),
-        modifier = Modifier.arrive(8),
+        modifier = Modifier.arrive(10),
     )
 }
 
