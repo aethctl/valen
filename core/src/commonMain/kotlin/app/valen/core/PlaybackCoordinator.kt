@@ -59,7 +59,10 @@ class PlaybackCoordinator(
     initial: AppSettings = settingsStore.load(),
     /** Counts listening for the profile's stats; none in tests that do not ask for it. */
     val stats: ListeningStats = ListeningStats(ListeningStore.None),
-    /** The wall clock the sleep timer runs on; a test's own in tests. */
+    /**
+     * The clock the coordinator reads: the sleep timer, the listening tick, a start's stale window
+     * and the session save; a test's own in tests.
+     */
     private val clock: () -> Long = { System.currentTimeMillis() },
     /** The words of the songs that play (Lyprio, then LRCLIB); none in tests that do not ask. */
     val lyrics: LyricsBook = LyricsBook.None,
@@ -260,12 +263,12 @@ class PlaybackCoordinator(
                 val raw = provider.player.value ?: continue
                 staleKey?.let { stale ->
                     // The service has not moved to the new song yet: keep the new one on show.
-                    if (raw.track?.key == stale && System.currentTimeMillis() - staleSince < STALE_SHOW_MS) continue
+                    if (raw.track?.key == stale && clock() - staleSince < STALE_SHOW_MS) continue
                     staleKey = null
                 }
                 // Sound from the song on show: the run of failures (see [moveOnAfterFailure]) is over.
                 if (raw.isPlaying && !raw.isBuffering && raw.error == null && raw.positionMs > 0) failuresInARow = 0
-                val now = System.currentTimeMillis()
+                val now = clock()
                 if (raw != lastRaw) {
                     lastRaw = raw
                     lastRawAt = now
@@ -776,7 +779,7 @@ class PlaybackCoordinator(
     fun saveSession() {
         // While the player is lent, the session on disk stays the person's own.
         if (lent != null) return
-        sessionSavedAt = System.currentTimeMillis()
+        sessionSavedAt = clock()
         val list = _queue.value
         val at = _index.value
         val session = if (list.isEmpty() || at !in list.indices) null else SavedSession(
@@ -828,7 +831,7 @@ class PlaybackCoordinator(
         // What that service shows now is its last song, not this one: kept off the screen.
         staleKey = target.player.value?.track?.key?.takeIf { it != track.key }
         asked = track
-        staleSince = System.currentTimeMillis()
+        staleSince = clock()
         // The adapter that plays it: its own service's, or this device's when the song is kept here.
         _active.value = target.id
         _settings.update { it.copy(lastProvider = track.provider) }

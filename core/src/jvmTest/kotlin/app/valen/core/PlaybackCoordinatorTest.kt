@@ -464,7 +464,14 @@ class PlaybackCoordinatorTest {
         var stored: String? = null
         val store = SettingsStore(read = { stored }, write = { stored = it })
         val spotify = FakeProvider(ProviderId.SPOTIFY)
-        val coordinator = PlaybackCoordinator(listOf(spotify), backgroundScope, store)
+        // The test's virtual clock, so a tick adds exactly the time the scheduler was advanced: on a
+        // real clock a fast machine could run every tick inside one millisecond and count nothing.
+        val coordinator = PlaybackCoordinator(
+            listOf(spotify),
+            backgroundScope,
+            store,
+            clock = { testScheduler.currentTime },
+        )
         val a = track(ProviderId.SPOTIFY, "a")
         val b = track(ProviderId.SPOTIFY, "b")
 
@@ -490,7 +497,7 @@ class PlaybackCoordinatorTest {
         testScheduler.advanceTimeBy(2_000)
         testScheduler.runCurrent()
         coordinator.stats.flush()
-        assertTrue(coordinator.stats.log.value.totalMs > 3_000L, "listening counts again")
+        assertEquals(5_000L, coordinator.stats.log.value.totalMs, "listening counts again")
         coordinator.next()
         assertEquals(1, coordinator.stats.log.value.skips[b.key])
         assertEquals(false, SettingsStore(read = { stored }, write = {}).load().privateMode)
