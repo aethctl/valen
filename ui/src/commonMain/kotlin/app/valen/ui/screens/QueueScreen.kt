@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
@@ -218,7 +219,11 @@ fun QueueScreen(
                                     track = track,
                                     dimmed = false,
                                     reorderable = true,
-                                    modifier = Modifier.animateItem(placementSpec = Motion.QueueReorder).rise(i + 1),
+                                    held = dragKey == track.key,
+                                    modifier = Modifier
+                                        .zIndex(if (dragKey == track.key) 1f else 0f)
+                                        .animateItem(placementSpec = Motion.QueueReorder)
+                                        .rise(i + 1),
                                     onPlay = { scope.launch { coordinator.play(track, coordinator.queue.value) } },
                                     onRemove = {
                                         val at = coordinator.queue.value.indexOfFirst { it.key == track.key }

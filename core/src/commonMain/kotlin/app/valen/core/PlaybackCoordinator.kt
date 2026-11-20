@@ -160,6 +160,25 @@ class PlaybackCoordinator(
     private var lastRaw: PlayerSnapshot? = null
     private var lastRawAt = 0L
 
+    /**
+     * The song the service that is starting a new one still showed when it was asked to: its own
+     * last state, which can be the song before or one it played long ago. Until the service shows
+     * something else (at most [STALE_SHOW_MS]) the tick does not put that song back on show over
+     * the new one. Copying it used to flip the screen old → new → old on a skip, and through songs
+     * nobody had asked for when the service changed.
+     */
+    @Volatile private var staleKey: String? = null
+    @Volatile private var staleSince = 0L
+
+    /**
+     * The song the active service was asked to play, as Valen knows it. While the service plays
+     * it — the same id, or the same recording under an id of the service's own (Spotify swaps in a
+     * regional copy) — this is what is shown, not the service's own description of it: the Web
+     * Player describes a song with a cover of another size, which made the same song arrive twice
+     * on screen (once starting, once loaded). Gaps (no cover, no album) are filled from the service.
+     */
+    @Volatile private var asked: Track? = null
+
     init {
         initial.session?.let { saved ->
             val at = saved.index.coerceIn(0, (saved.queue.size - 1).coerceAtLeast(0))
@@ -232,6 +251,11 @@ class PlaybackCoordinator(
                 val id = _active.value ?: continue
                 val provider = byId[id] ?: continue
                 val raw = provider.player.value ?: continue
+                staleKey?.let { stale ->
+                    // The service has not moved to the new song yet: keep the new one on show.
+                    if (raw.track?.key == stale && System.currentTimeMillis() - staleSince < STALE_SHOW_MS) continue
+                    staleKey = null
+                }
                 // Sound from the song on show: the run of failures (see [moveOnAfterFailure]) is over.
                 if (raw.isPlaying && !raw.isBuffering && raw.error == null && raw.positionMs > 0) failuresInARow = 0
                 val now = System.currentTimeMillis()
@@ -242,7 +266,7 @@ class PlaybackCoordinator(
                 val rate = playbackRate(provider)
                 val elapsed = if (raw.isPlaying && !raw.isBuffering) ((now - lastRawAt).coerceAtLeast(0) * rate).toLong() else 0L
                 val position = (raw.positionMs + elapsed).coerceAtMost(raw.durationMs.takeIf { it > 0 } ?: Long.MAX_VALUE)
-                _snapshot.value = raw.copy(positionMs = position, volume = _settings.value.volume)
+                _snapshot.value = raw.copy(track = asShown(raw.track), positionMs = position, volume = _settings.value.volume)
                 // Only time the song really played counts: not paused, not buffering, and never
                 // more than a couple of seconds for one tick (a suspended machine is not listening).
                 val heard = raw.track
@@ -254,6 +278,20 @@ class PlaybackCoordinator(
                 if (raw.isPlaying && now - sessionSavedAt >= SESSION_SAVE_MS) saveSession()
             }
         }
+    }
+
+    /** [playing] as the screen shows it: the song Valen asked for while it is that song (see [asked]). */
+    private fun asShown(playing: Track?): Track? {
+        val mine = asked ?: return playing
+        if (playing == null) return null
+        val same = playing.key == mine.key ||
+            (playing.provider == mine.provider && recordingKey(playing.title, playing.artist) == recordingKey(mine.title, mine.artist))
+        if (!same) return playing
+        return mine.copy(
+            artworkUrl = mine.artworkUrl ?: playing.artworkUrl,
+            album = mine.album ?: playing.album,
+            durationMs = mine.durationMs.takeIf { it > 0 } ?: playing.durationMs,
+        )
     }
 
     fun provider(id: ProviderId): MusicProvider? = byId[id]
@@ -644,6 +682,10 @@ class PlaybackCoordinator(
         val position = at
         val gen = ++startGen
         _index.value = position
+        // What that service shows now is its last song, not this one: kept off the screen.
+        staleKey = target.player.value?.track?.key?.takeIf { it != track.key }
+        asked = track
+        staleSince = System.currentTimeMillis()
         // The adapter that plays it: its own service's, or this device's when the song is kept here.
         _active.value = target.id
         _settings.update { it.copy(lastProvider = track.provider) }
@@ -1415,6 +1457,9 @@ class PlaybackCoordinator(
 
         /** Failures in a row after which the queue is no longer walked. */
         const val MAX_FAILED_IN_A_ROW = 5
+
+        /** A starting service's own last song is kept off the screen this long at most. */
+        const val STALE_SHOW_MS = 10_000L
 
         /** One page of merged answers; enough to scroll, not so many that a search never ends. */
         const val MAX_UNIFIED_RESULTS = 50

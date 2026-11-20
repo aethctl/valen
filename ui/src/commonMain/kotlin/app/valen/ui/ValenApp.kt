@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.valen.core.PlaybackCoordinator
+import kotlinx.coroutines.flow.map
 import app.valen.core.PlaylistManager
 import app.valen.ui.artwork.ArtworkPalette
 import app.valen.ui.artwork.LocalPlayingTones
@@ -181,7 +182,7 @@ fun ValenApp(
         val followCover = settings.coverColour
         // Set before anything reads a tone this frame, so the first frame is already right.
         ArtworkPalette.followCover = followCover
-        val tones = ArtworkPalette.tones(playing?.track?.artworkUrl)
+        val tones = app.valen.ui.artwork.rememberSettledTones(playing?.track?.artworkUrl)
         // The whole app is one colour: pink on black by default, or the playing cover's. It eases
         // to a new one rather than jumping.
         val seed by animateColorAsState(tones.accent, Motion.tint(), label = "seed")
@@ -212,6 +213,7 @@ fun ValenApp(
             LocalRecap provides recap,
             app.valen.ui.update.LocalUpdateSheet provides remember { app.valen.ui.update.UpdateSheetState() },
             app.valen.ui.components.LocalWarm provides remember(coordinator) { { t: app.valen.core.Track -> coordinator.warm(t) } },
+            app.valen.ui.components.LocalFlights provides remember { app.valen.ui.components.Flights() },
         ) {
             BoxWithConstraints(
                 modifier = Modifier
@@ -252,6 +254,8 @@ private fun WideApp(
     val settings by coordinator.settings.collectAsState()
     val notice by coordinator.notice.collectAsState()
     val confirmation by coordinator.noticeIsConfirmation.collectAsState()
+    // Read only by the dock's queue glyph, so a queue change recomposes that glyph alone.
+    val queueSize = remember(coordinator) { coordinator.queue.map { it.size } }.collectAsState(coordinator.queue.value.size)
     val track = snapshot?.track
     val route = nav.top
 
@@ -327,6 +331,7 @@ private fun WideApp(
                 onSeek = { position -> scope.launch { coordinator.seek(position) } },
                 onVolume = { value -> scope.launch { coordinator.setVolume(value) } },
                 onQueue = { nav.open(Route.Queue) },
+                queueSize = { queueSize.value },
                 modes = PlayModes(
                     shuffle = settings.shuffle,
                     repeat = settings.repeat,
@@ -363,6 +368,8 @@ private fun WideApp(
                 .align(Alignment.TopCenter)
                 .padding(start = chrome.start + gutter, end = gutter, top = Space.step4),
         )
+        // Songs added to the queue, flying into the dock.
+        app.valen.ui.components.FlightHost(app.valen.ui.components.LocalFlights.current)
         }
     }
 }
@@ -441,6 +448,7 @@ private fun PhoneApp(
                     onOpen = { nav.open(Route.NowPlaying) },
                     onToggle = { scope.launch { coordinator.toggle() } },
                     onNext = { scope.launch { coordinator.next() } },
+                    onPrevious = if (snapshot?.canSkip != false) ({ scope.launch { coordinator.previous() } }) else null,
                 )
             }
             BottomNav(current = nav.top, onNavigate = nav::open)
@@ -454,6 +462,8 @@ private fun PhoneApp(
                 .align(Alignment.TopCenter)
                 .padding(horizontal = Layout.chromeInset, vertical = Space.step2),
         )
+        // Songs added to the queue, flying into the mini player.
+        app.valen.ui.components.FlightHost(app.valen.ui.components.LocalFlights.current)
         }
 
         CompositionLocalProvider(LocalChrome provides sheet) {
@@ -704,20 +714,8 @@ private fun Rising(
 
 @Composable
 private fun Notice(message: String?, confirmation: Boolean, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
-    val reduced = LocalReducedMotion.current
-    AnimatedVisibility(
-        visible = message != null,
-        enter = if (reduced) fadeIn(Motion.fade()) else slideInVertically(Motion.enter()) { -it } + fadeIn(Motion.enter()),
-        exit = if (reduced) fadeOut(Motion.fade()) else slideOutVertically(Motion.exit()) { -it } + fadeOut(Motion.exit()),
-        modifier = modifier,
-    ) {
-        val shown = rememberLast(message) ?: return@AnimatedVisibility
-        NoticeToast(
-            message = shown,
-            confirmation = confirmation,
-            onDismiss = onDismiss,
-        )
-    }
+    // Glass poured out of a drop, like the song menu; see PouredNotice.
+    app.valen.ui.components.PouredNotice(message = message, confirmation = confirmation, onDismiss = onDismiss, modifier = modifier)
 }
 
 /** The last non-null [value]: what something keeps showing while it animates away. */

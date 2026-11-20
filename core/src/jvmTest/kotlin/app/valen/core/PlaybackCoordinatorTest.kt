@@ -880,4 +880,82 @@ class PlaybackCoordinatorTest {
         assertTrue(coordinator.queue.value.size >= 1, "the radio starts from its seed")
         assertEquals(true, saved.load().session?.generated, "a radio queue is Valen's, so it is saved as generated")
     }
+
+    @Test
+    fun `a service that has not moved yet never puts its last song back on show`() = runTest {
+        // A service that answers play() at once but shows the new song only later, like a page or
+        // a stream still opening; until then its own state still names what it played before.
+        val slow = LaggingProvider(ProviderId.SOUNDCLOUD)
+        val coordinator = PlaybackCoordinator(listOf(slow), backgroundScope, settings())
+        val a = track(ProviderId.SOUNDCLOUD, "a")
+        val b = track(ProviderId.SOUNDCLOUD, "b")
+        coordinator.play(a, listOf(a, b))
+        slow.show(a)
+        testScheduler.advanceTimeBy(300)
+        testScheduler.runCurrent()
+        assertEquals(a.key, coordinator.snapshot.value?.track?.key)
+
+        coordinator.next()
+        // Ticks pass while the service still shows the song before: the new one stays on show.
+        repeat(4) {
+            testScheduler.advanceTimeBy(260)
+            testScheduler.runCurrent()
+            assertEquals(b.key, coordinator.snapshot.value?.track?.key, "the old song came back on show")
+        }
+        // The service moves: its own state is taken again, playing.
+        slow.show(b)
+        testScheduler.advanceTimeBy(260)
+        testScheduler.runCurrent()
+        assertEquals(b.key, coordinator.snapshot.value?.track?.key)
+        assertTrue(coordinator.snapshot.value?.isPlaying == true)
+    }
+
+    @Test
+    fun `the service's own description of the song asked for never replaces it on screen`() = runTest {
+        val slow = LaggingProvider(ProviderId.SPOTIFY)
+        val coordinator = PlaybackCoordinator(listOf(slow), backgroundScope, settings())
+        val asked = Track(
+            provider = ProviderId.SPOTIFY, id = "a", title = "Song", artist = "Artist",
+            artworkUrl = "https://img/640", durationMs = 180_000, uri = "uri:a",
+        )
+        coordinator.play(asked, listOf(asked))
+        // The Web Player describes it with a cover of another size...
+        slow.show(asked.copy(artworkUrl = "https://img/300"))
+        testScheduler.advanceTimeBy(300)
+        testScheduler.runCurrent()
+        assertEquals(asked, coordinator.snapshot.value?.track)
+        // ...or as a regional copy with an id of its own: still the song that was asked for.
+        slow.show(asked.copy(id = "relinked", uri = "uri:relinked", artworkUrl = "https://img/300"))
+        testScheduler.advanceTimeBy(300)
+        testScheduler.runCurrent()
+        assertEquals(asked, coordinator.snapshot.value?.track)
+        // A different song is the service's own.
+        val other = Track(provider = ProviderId.SPOTIFY, id = "b", title = "Other", artist = "Artist", uri = "uri:b")
+        slow.show(other)
+        testScheduler.advanceTimeBy(300)
+        testScheduler.runCurrent()
+        assertEquals(other.key, coordinator.snapshot.value?.track?.key)
+    }
+}
+
+/** Takes play() but changes what it shows only when told to ([show]). */
+private class LaggingProvider(override val id: ProviderId) : MusicProvider {
+    override val session = MutableStateFlow<SessionState>(SessionState.Connected("test"))
+    override val player = MutableStateFlow<PlayerSnapshot?>(null)
+    override val events = MutableSharedFlow<ProviderEvent>()
+
+    fun show(track: Track) {
+        player.value = PlayerSnapshot(track = track, isPlaying = true, durationMs = track.durationMs)
+    }
+
+    override suspend fun connect() {}
+    override suspend fun disconnect() {}
+    override suspend fun search(query: String, limit: Int): List<Track> = emptyList()
+    override suspend fun play(track: Track, startMs: Long) {}
+    override suspend fun pause() { player.value = player.value?.copy(isPlaying = false) }
+    override suspend fun resume() { player.value = player.value?.copy(isPlaying = true) }
+    override suspend fun seek(positionMs: Long) {}
+    override suspend fun setVolume(volume: Float) {}
+    override suspend fun prepare(track: Track) {}
+    override suspend fun close() {}
 }

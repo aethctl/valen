@@ -2,6 +2,9 @@
 package app.valen.desktop
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerButtons
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import app.valen.ui.menu.MenuOrigin
@@ -154,6 +157,29 @@ object Capture {
             val recapAt = System.getenv("VALEN_CAPTURE_RECAP")?.toIntOrNull()
             var recapOpened = recapAt == null
             var recapTurned = System.getenv("VALEN_CAPTURE_RECAP_TURN") == null
+            // VALEN_CAPTURE_SKIP=next|prev[,next|prev…] moves the queue on (or back) halfway, then
+            // once more every 1.5 s, to see a song change: the poster slapped on (or lifted off),
+            // the rail's paint running, the dock's gulp.
+            val skips = System.getenv("VALEN_CAPTURE_SKIP")?.lowercase()?.split(',')?.map { it.trim() }.orEmpty().toMutableList()
+            var nextSkipAt = 0L
+            // VALEN_CAPTURE_ENQUEUE=1 adds a copy of the playing song to the queue halfway: the poured
+            // notice with its drawn tick, and the dock's queue glyph swallowing it.
+            var enqueued = System.getenv("VALEN_CAPTURE_ENQUEUE") == null
+            // VALEN_CAPTURE_PAUSE=1 pauses the song halfway (the lights going down).
+            var paused = System.getenv("VALEN_CAPTURE_PAUSE") == null
+            // VALEN_CAPTURE_POINTER=X,Y rests a mouse pointer there from a third of the way in
+            // (hover states: a rail's ghost and its times); VALEN_CAPTURE_DRAG=X,Y,X2,Y2 presses
+            // at X,Y halfway, drags to X2,Y2 over a second, rests and lets go at 1.6 s.
+            val pointer = System.getenv("VALEN_CAPTURE_POINTER")?.split(',')?.mapNotNull { it.trim().toFloatOrNull() }
+                ?.takeIf { it.size == 2 }?.let { Offset(it[0], it[1]) }
+            var pointed = pointer == null
+            val drag = System.getenv("VALEN_CAPTURE_DRAG")?.split(',')?.mapNotNull { it.trim().toFloatOrNull() }
+                ?.takeIf { it.size == 4 }
+            var dragFrom = -1L
+            // VALEN_CAPTURE_CLICK=X,Y clicks there halfway (a search row's +: the drop's flight).
+            val click = System.getenv("VALEN_CAPTURE_CLICK")?.split(',')?.mapNotNull { it.trim().toFloatOrNull() }
+                ?.takeIf { it.size == 2 }?.let { Offset(it[0], it[1]) }
+            var clicked = click == null
             val frames = System.getenv("VALEN_CAPTURE_FRAMES")?.let { Path.of(it) }?.also { Files.createDirectories(it) }
             var frame = 0
             val step = System.getenv("VALEN_CAPTURE_STEP_MS")?.toLongOrNull() ?: STEP_MS
@@ -196,6 +222,53 @@ object Capture {
                         turnTo?.let { soundTab.value = it }
                         presetTo?.let { coordinator.usePreset(it) }
                     }
+                    if (skips.isNotEmpty() && System.nanoTime() > maxOf(halfway, nextSkipAt)) {
+                        val skip = skips.removeAt(0)
+                        nextSkipAt = System.nanoTime() + 1_500_000_000L
+                        kotlinx.coroutines.runBlocking { if (skip == "prev") coordinator.previous() else coordinator.next() }
+                    }
+                    if (!paused && System.nanoTime() > halfway && coordinator.snapshot.value?.isPlaying == true) {
+                        paused = true
+                        kotlinx.coroutines.runBlocking { coordinator.toggle() }
+                    }
+                    if (!enqueued && System.nanoTime() > halfway) {
+                        coordinator.snapshot.value?.track?.let { song ->
+                            // A song the queue does not hold yet (it refuses one it has): the
+                            // playing one under a key of its own, never played in the capture.
+                            coordinator.enqueue(song.copy(id = song.id + "#capture"))
+                            enqueued = true
+                        }
+                    }
+                    if (!pointed && System.nanoTime() > settleUntil - settle * 666_000L) {
+                        pointed = true
+                        scene.sendPointerEvent(PointerEventType.Enter, pointer!!, type = PointerType.Mouse)
+                        scene.sendPointerEvent(PointerEventType.Move, pointer, type = PointerType.Mouse)
+                    }
+                    if (!clicked && System.nanoTime() > halfway) {
+                        clicked = true
+                        scene.sendPointerEvent(PointerEventType.Enter, click!!, type = PointerType.Mouse)
+                        scene.sendPointerEvent(PointerEventType.Move, click, type = PointerType.Mouse)
+                        scene.sendPointerEvent(PointerEventType.Press, click, type = PointerType.Mouse, buttons = PointerButtons(isPrimaryPressed = true))
+                        scene.sendPointerEvent(PointerEventType.Release, click, type = PointerType.Mouse)
+                    }
+                    if (drag != null && System.nanoTime() > halfway) {
+                        val from = Offset(drag[0], drag[1])
+                        val to = Offset(drag[2], drag[3])
+                        if (dragFrom < 0L) {
+                            dragFrom = nanos
+                            scene.sendPointerEvent(PointerEventType.Move, from, type = PointerType.Mouse)
+                            scene.sendPointerEvent(PointerEventType.Press, from, type = PointerType.Mouse, buttons = PointerButtons(isPrimaryPressed = true))
+                        } else if (nanos - dragFrom <= DRAG_HOLD_NANOS) {
+                            val t = ((nanos - dragFrom) / 1_000_000_000f).coerceIn(0f, 1f)
+                            val at = Offset(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
+                            scene.sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse, buttons = PointerButtons(isPrimaryPressed = true))
+                        } else if (dragFrom > 0L) {
+                            // Held a moment at the end, then let go (a held row is slapped back,
+                            // a pulled mini player skips).
+                            scene.sendPointerEvent(PointerEventType.Release, to, type = PointerType.Mouse)
+                            dragFrom = 0L
+                        }
+                    }
                     if (menuPage != null && !menuOpened && System.nanoTime() > halfway) {
                         coordinator.snapshot.value?.track?.let { song ->
                             if (menuPage == MenuPage.Sleep) coordinator.sleepIn(30)
@@ -229,14 +302,19 @@ object Capture {
                 println("saved ${path.toAbsolutePath()} (${image.width}x${image.height})")
                 true
             } finally {
-                scene.close()
+                // A failure while drawing must not be hidden by one while tearing down.
+                runCatching { scene.close() }.onFailure { System.err.println("valen: tearing the window down failed: ${it.message}") }
             }
         }.getOrElse {
             System.err.println("valen: could not render the window: ${it.message}")
+            if (System.getenv("VALEN_CAPTURE_TRACE") != null) it.printStackTrace()
             false
         }
 
     /** How long the scene keeps drawing so real network answers can reach a frame. */
     private const val SETTLE_MS = 5_000L
     private const val STEP_MS = 80L
+
+    /** A capture's drag moves for a second, rests, and lets go at this much animation time. */
+    private const val DRAG_HOLD_NANOS = 1_600_000_000L
 }
