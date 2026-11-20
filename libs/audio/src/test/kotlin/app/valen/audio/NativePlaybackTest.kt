@@ -281,4 +281,54 @@ class NativePlaybackTest {
         play.join()
         assertEquals(1, asked, "the play waited for the warm-up's answer")
     }
+
+    @Test
+    fun `long podcasts stream without being saved to disk`() = runTest {
+        val player = FakePlayer()
+        val scope = CoroutineScope(UnconfinedTestDispatcher(testScheduler))
+        var kept = 0
+        val cache = object : StreamCache {
+            override fun offline(key: String): ResolvedStream? = null
+            override fun keep(key: String, stream: ResolvedStream, playing: Boolean) { kept++ }
+            override fun forget(key: String) = Unit
+        }
+        val playback = NativePlayback(player, scope, cache = cache) { _, _ ->
+            ResolvedStream("https://example.test/podcast", durationMs = 90 * 60_000L)
+        }
+        val podcast = track.copy(durationMs = 90 * 60_000L)
+
+        playback.prepare(podcast)
+        playback.play(podcast, 0)
+
+        assertEquals(0, kept)
+        assertNull(player.played?.cacheKey)
+        assertEquals("https://example.test/podcast", player.played?.url)
+        scope.cancel()
+    }
+
+    @Test
+    fun `ordinary songs remain cacheable and existing offline files remain playable`() = runTest {
+        val player = FakePlayer()
+        val scope = CoroutineScope(UnconfinedTestDispatcher(testScheduler))
+        var kept = 0
+        var cached: ResolvedStream? = null
+        val cache = object : StreamCache {
+            override fun offline(key: String): ResolvedStream? = cached
+            override fun keep(key: String, stream: ResolvedStream, playing: Boolean) { kept++ }
+            override fun forget(key: String) = Unit
+        }
+        val playback = NativePlayback(player, scope, cache = cache) { _, _ ->
+            ResolvedStream("https://example.test/song", durationMs = track.durationMs)
+        }
+
+        playback.play(track, 0)
+        assertEquals(1, kept)
+        assertNotNull(player.played?.cacheKey)
+
+        cached = ResolvedStream("/cache/song", cacheKey = track.provider.name.lowercase() + "-" + track.id)
+        playback.play(track.copy(durationMs = 90 * 60_000L), 0)
+        assertEquals("/cache/song", player.played?.url)
+        assertNotNull(player.played?.cacheKey)
+        scope.cancel()
+    }
 }
