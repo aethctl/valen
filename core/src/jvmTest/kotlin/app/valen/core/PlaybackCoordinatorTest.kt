@@ -99,18 +99,91 @@ class PlaybackCoordinatorTest {
     }
 
     @Test
-    fun `the last track pauses instead of wrapping when it ends`() = runTest {
+    fun `with keep playing off, the last track pauses instead of wrapping when it ends`() = runTest {
         val spotify = FakeProvider(ProviderId.SPOTIFY)
         val coordinator = PlaybackCoordinator(listOf(spotify), backgroundScope, settings())
+        coordinator.setKeepPlaying(false)
 
         val a = track(ProviderId.SPOTIFY, "a")
         val b = track(ProviderId.SPOTIFY, "b")
         coordinator.play(a, listOf(a, b))
         coordinator.next()
+        runCurrent()
         coordinator.next(auto = true)
 
         assertEquals(1, coordinator.index.value)
         assertEquals(false, spotify.playing)
+        assertEquals(listOf(a, b), coordinator.queue.value)
+        assertTrue(coordinator.keepPlaying.value.isEmpty(), "nothing is looked for while it is off")
+    }
+
+    /** A service whose every search finds five songs not seen before, all by "Artist". */
+    private class EndlessProvider : MusicProvider by FakeProvider(ProviderId.SPOTIFY) {
+        val inner = FakeProvider(ProviderId.SPOTIFY)
+        var batch = 0
+        override val player = inner.player
+        override suspend fun play(track: Track, startMs: Long) = inner.play(track, startMs)
+        override suspend fun search(query: String, limit: Int): List<Track> {
+            val b = ++batch
+            return (1..5).map { Track(ProviderId.SPOTIFY, "k$b-$it", "Found $b song $it", "Artist", durationMs = 180_000) }
+        }
+    }
+
+    @Test
+    fun `when the queue runs out, songs like it play on, after anything added meanwhile`() = runTest {
+        val spotify = EndlessProvider()
+        val written = StringBuilder()
+        val store = SettingsStore(read = { written.toString().ifEmpty { null } }, write = { written.clear(); written.append(it) })
+        val coordinator = PlaybackCoordinator(listOf(spotify), backgroundScope, store)
+        val a = track(ProviderId.SPOTIFY, "a")
+        val b = track(ProviderId.SPOTIFY, "b")
+        coordinator.play(a, listOf(a, b))
+        runCurrent()
+        // One song left after the playing one: what follows is found now, and is not the queue.
+        assertTrue(coordinator.keepPlaying.value.isNotEmpty(), "songs found to follow the queue")
+        assertEquals(listOf(a, b), coordinator.queue.value)
+
+        // A song added now goes before them.
+        val c = track(ProviderId.SPOTIFY, "c")
+        coordinator.enqueue(c)
+        coordinator.next(); runCurrent()
+        coordinator.next(auto = true); runCurrent()
+        assertEquals(c, coordinator.queue.value[coordinator.index.value])
+        val following = coordinator.keepPlaying.value
+        assertTrue(following.isNotEmpty(), "found again for the queue's new end")
+
+        // c ends: the music goes on with them.
+        coordinator.next(auto = true); runCurrent()
+        assertEquals(listOf(a, b, c), coordinator.queue.value.take(3))
+        assertEquals(3, coordinator.index.value)
+        assertEquals(following.first(), spotify.inner.played)
+        assertTrue(spotify.inner.playing)
+        assertEquals(following.map { it.key }, coordinator.queue.value.drop(3).map { it.key })
+        assertTrue(coordinator.queue.value.distinctBy { recordingKey(it.title, it.artist) }.size == coordinator.queue.value.size, "no song twice")
+        // They are Valen's, not chosen, and a restart still knows it.
+        assertEquals(following.map { it.key }, store.load().session?.offered)
+    }
+
+    @Test
+    fun `a queue that repeats looks for nothing to follow it, and a tapped follower plays at once`() = runTest {
+        val spotify = EndlessProvider()
+        val coordinator = PlaybackCoordinator(listOf(spotify), backgroundScope, settings())
+        val a = track(ProviderId.SPOTIFY, "a")
+        coordinator.setRepeat(RepeatMode.ALL)
+        coordinator.play(a)
+        runCurrent()
+        assertTrue(coordinator.keepPlaying.value.isEmpty(), "a repeating queue never runs out")
+
+        coordinator.setRepeat(RepeatMode.OFF)
+        runCurrent()
+        val found = coordinator.keepPlaying.value
+        assertTrue(found.size >= 3, "found once it can run out: $found")
+
+        coordinator.playFromKeepPlaying(found[2])
+        runCurrent()
+        assertEquals(listOf(a) + found, coordinator.queue.value)
+        assertEquals(3, coordinator.index.value)
+        assertEquals(found[2], spotify.inner.played)
     }
 
     @Test

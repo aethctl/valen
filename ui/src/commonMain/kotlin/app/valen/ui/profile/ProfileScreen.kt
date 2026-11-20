@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 package app.valen.ui.profile
 
+import app.valen.ui.typing
 import androidx.compose.animation.core.Animatable
 import app.valen.ui.components.ScrollPage
 import androidx.compose.animation.core.tween
@@ -168,6 +169,7 @@ private fun Identity(
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             // As wide as the name, so it sits in the middle and the marker goes over the name only.
             modifier = Modifier
+                .typing()
                 .width(IntrinsicSize.Max)
                 .widthIn(min = 200.dp, max = 560.dp)
                 .markerSwipe(active = typed.isNotBlank(), color = ValenColors.Container, seed = 986)

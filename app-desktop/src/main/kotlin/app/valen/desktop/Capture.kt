@@ -112,9 +112,18 @@ object Capture {
         runCatching {
             path.toAbsolutePath().parent?.let { Files.createDirectories(it) }
             // Development only: VALEN_CAPTURE_GO switches to another route halfway through the
-            // settle (so a page change can be seen), VALEN_CAPTURE_FRAMES saves every frame drawn.
+            // settle (so a page change can be seen), or to each of a comma-separated list in turn
+            // 900 ms of animation time apart (a second visit's arrival, or coming back); the old
+            // page's exit is seen too. VALEN_CAPTURE_GO_MS sets that gap in animation time, for a
+            // shorter or longer one (a slow frame clock needs a longer settle). VALEN_CAPTURE_FRAMES
+            // saves every frame drawn.
             val shownRoute = mutableStateOf(route.name)
-            val goTo = System.getenv("VALEN_CAPTURE_GO")?.let { Route.from(it).name }
+            val goes = System.getenv("VALEN_CAPTURE_GO")?.split(',')?.mapNotNull { name ->
+                name.trim().takeIf(String::isNotEmpty)?.let { Route.from(it).name }
+            }.orEmpty()
+            val goGapNanos = (System.getenv("VALEN_CAPTURE_GO_MS")?.toLongOrNull() ?: 900L) * 1_000_000L
+            var goIndex = 0
+            var nextGoAtNanos = 0L
             // VALEN_CAPTURE_MENU=main|playlist|sleep opens the playing song's menu on that page,
             // grown from about where the stage's ⋯ sits, at the same halfway point.
             val menuPage = when (System.getenv("VALEN_CAPTURE_MENU")) {
@@ -180,6 +189,15 @@ object Capture {
             val click = System.getenv("VALEN_CAPTURE_CLICK")?.split(',')?.mapNotNull { it.trim().toFloatOrNull() }
                 ?.takeIf { it.size == 2 }?.let { Offset(it[0], it[1]) }
             var clicked = click == null
+            var clickedAt = -1L
+            var unclicked = click == null
+            // VALEN_CAPTURE_KEYS=help[,stage,…] presses those shortcuts (`Shortcut` names) halfway,
+            // 1.2 s apart: the keys page slapped up, a place opened from the keyboard.
+            val keys = app.valen.ui.KeyShortcuts()
+            val keyPresses = System.getenv("VALEN_CAPTURE_KEYS")?.split(',')?.mapNotNull { name ->
+                app.valen.ui.Shortcut.entries.firstOrNull { it.name.equals(name.trim(), ignoreCase = true) }
+            }.orEmpty().toMutableList()
+            var nextKeyAt = 0L
             val frames = System.getenv("VALEN_CAPTURE_FRAMES")?.let { Path.of(it) }?.also { Files.createDirectories(it) }
             var frame = 0
             val step = System.getenv("VALEN_CAPTURE_STEP_MS")?.toLongOrNull() ?: STEP_MS
@@ -188,7 +206,7 @@ object Capture {
                 height = height,
                 density = Density(1f),
             ) {
-                ValenApp(coordinator, playlists, shownRoute.value, query, songMenu = songMenu, pageMemory = pageMemory, recap = recap)
+                ValenApp(coordinator, playlists, shownRoute.value, query, songMenu = songMenu, pageMemory = pageMemory, recap = recap, keys = keys)
             }
             try {
                 // One frame composes the tree, then the scene is drawn repeatedly while the real
@@ -203,7 +221,10 @@ object Capture {
                 while (System.nanoTime() < settleUntil) {
                     Thread.sleep(step)
                     nanos += step * 1_000_000L
-                    if (goTo != null && shownRoute.value != goTo && System.nanoTime() > halfway) shownRoute.value = goTo
+                    if (goIndex < goes.size && System.nanoTime() > halfway && (goIndex == 0 || nanos >= nextGoAtNanos)) {
+                        shownRoute.value = goes[goIndex++]
+                        nextGoAtNanos = nanos + goGapNanos
+                    }
                     if (!recapOpened && nanos >= 240_000_000L) {
                         recapOpened = true
                         recap.open(recapAt!!)
@@ -227,6 +248,10 @@ object Capture {
                         nextSkipAt = System.nanoTime() + 1_500_000_000L
                         kotlinx.coroutines.runBlocking { if (skip == "prev") coordinator.previous() else coordinator.next() }
                     }
+                    if (keyPresses.isNotEmpty() && System.nanoTime() > maxOf(halfway, nextKeyAt)) {
+                        nextKeyAt = System.nanoTime() + 1_200_000_000L
+                        keys.run(keyPresses.removeAt(0))
+                    }
                     if (!paused && System.nanoTime() > halfway && coordinator.snapshot.value?.isPlaying == true) {
                         paused = true
                         kotlinx.coroutines.runBlocking { coordinator.toggle() }
@@ -244,12 +269,18 @@ object Capture {
                         scene.sendPointerEvent(PointerEventType.Enter, pointer!!, type = PointerType.Mouse)
                         scene.sendPointerEvent(PointerEventType.Move, pointer, type = PointerType.Mouse)
                     }
+                    // Press, then let go a few frames later: `clickable` wants to see the down and
+                    // the up as separate frames, as a real mouse gives them (both in one frame never
+                    // reached it, and a click on a row did nothing).
                     if (!clicked && System.nanoTime() > halfway) {
                         clicked = true
+                        clickedAt = nanos
                         scene.sendPointerEvent(PointerEventType.Enter, click!!, type = PointerType.Mouse)
                         scene.sendPointerEvent(PointerEventType.Move, click, type = PointerType.Mouse)
                         scene.sendPointerEvent(PointerEventType.Press, click, type = PointerType.Mouse, buttons = PointerButtons(isPrimaryPressed = true))
-                        scene.sendPointerEvent(PointerEventType.Release, click, type = PointerType.Mouse)
+                    } else if (clicked && !unclicked && nanos - clickedAt >= 90_000_000L) {
+                        unclicked = true
+                        scene.sendPointerEvent(PointerEventType.Release, click!!, type = PointerType.Mouse)
                     }
                     if (drag != null && System.nanoTime() > halfway) {
                         val from = Offset(drag[0], drag[1])

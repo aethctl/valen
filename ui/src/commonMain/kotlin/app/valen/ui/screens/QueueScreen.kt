@@ -81,6 +81,7 @@ fun QueueScreen(
     val queue by coordinator.queue.collectAsState()
     val index by coordinator.index.collectAsState()
     val snapshot by coordinator.nowPlaying.collectAsState()
+    val following by coordinator.keepPlaying.collectAsState()
 
     var dragKey by remember { mutableStateOf<String?>(null) }
     var dragTravel by remember { mutableStateOf(0f) }
@@ -241,13 +242,38 @@ fun QueueScreen(
                                     dragDelta = ::dragDelta,
                                 )
                             }
-                        } else {
+                        } else if (following.isEmpty()) {
                             item(key = "queue_end") {
                                 Text(
                                     text = "Nothing after this song. Add another from search.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = ValenColors.Text2,
                                     modifier = Modifier.padding(top = if (beside) 0.dp else Space.step6, bottom = Space.step2),
+                                )
+                            }
+                        }
+
+                        // What plays on once the queue runs out: Valen's, not the queue, so it is
+                        // headed as such and cannot be dragged into it.
+                        if (following.isNotEmpty()) {
+                            item(key = "queue_following_label") {
+                                Column {
+                                    QueueSectionLabel("Then, songs like these", first = beside && upNext.isEmpty())
+                                    Text(
+                                        text = "When the queue runs out, Valen keeps playing. Songs you add go first.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = ValenColors.Text2,
+                                        modifier = Modifier.padding(bottom = Space.step2),
+                                    )
+                                }
+                            }
+                            itemsIndexed(following, key = { _, it -> "queue_following_${it.key}" }) { i, track ->
+                                QueueRow(
+                                    track = track,
+                                    dimmed = false,
+                                    modifier = Modifier.animateItem(placementSpec = Motion.QueueReorder).rise(upNext.size + i + 1),
+                                    onPlay = { scope.launch { coordinator.playFromKeepPlaying(track) } },
+                                    onRemove = { coordinator.dropFromKeepPlaying(track) },
                                 )
                             }
                         }

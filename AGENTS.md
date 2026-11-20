@@ -104,6 +104,8 @@ valen [--width N] [--height N] [--route home|search|playlists|import|now-playing
 | `VALEN_CAPTURE_POINTER=X,Y` | `--screenshot` only: rest a mouse pointer there from a third of the way in (hover states: a rail's ghost and its times, a cover's lean) |
 | `VALEN_CAPTURE_CLICK=X,Y` | `--screenshot` only: click there halfway (a search row's + at 1600×900: the drop flying into the dock) |
 | `VALEN_CAPTURE_DRAG=X,Y,X2,Y2` | `--screenshot` only: press at X,Y halfway, drag to X2,Y2 over a second, rest and let go at 1.6 s (a held queue row slapped back: its handle is at about 1537,211 at 1600×900; a pulled mini player: about 230,732 → 100,732 at 390×844) |
+| `VALEN_CAPTURE_KEYS=help[,stage,…]` | `--screenshot` only: do those keyboard shortcuts (`Shortcut` names: `help`, `stage`, `queue`, `search`, `shuffle`…) halfway, 1.2 s apart (`help` slaps the keys page up) |
+| `VALEN_CAPTURE_ALONE=1` | with `--play`: queue the song found by itself, not with the other results (a queue at its end: "Then, songs like these") |
 | `VALEN_CAPTURE_TRACE=1` | `--screenshot` only: print the stack of a render failure (a teardown failure is always named) |
 | `VALEN_CAPTURE_IDLE=1` | `--screenshot` only: after the settle, print how many of 20 more frames still ask to be redrawn (a redraw loop shows as 20 of 20) |
 | `VALEN_FFPLAY_BIN` | ffplay used for native playback |
@@ -330,6 +332,14 @@ Key invariants:
   cover, which made the stage's poster slap the same song on twice (once starting, once loaded);
   it also kept a playing row unmarked when the page's id differed. A different song is shown as
   the service reports it. Pinned by "the service's own description of the song asked for…".
+- **What keeps the music going is not the queue until it is played.** With `keepPlaying` on (the
+  default) and nothing repeating, `findMoreToKeepPlaying()` (from `prepareNext`, and when the
+  setting or repeat changes) looks for songs like the queue's last five once two or fewer are left;
+  they sit in `keepPlaying`, apart from `queue`, so an `enqueue` still goes before them. Only at the
+  end of the queue (`decideNext` → `keepGoing()`) do they join it, their keys in `offered`: their
+  listening counts as generated, and the saved session keeps that (`SavedSession.offered`). A new
+  queue (`play`, `clearQueue`, `clearData`) forgets both, a radio refills itself instead, and a
+  lent player (the recap) never keeps going. Pinned by "when the queue runs out, songs like it…".
 - **Between two songs there is always a song on show.** `begin()` shows the new song as starting
   instead of null: Android read null as "the session ended", stopped its playback service at every
   song change, and with the screen off could not start it again. `ValenRuntime` also ends the
@@ -781,6 +791,18 @@ These cost hours before; do not relearn them.
   on empty space) trips that error too, and so did the untouched v1.0.0-alpha.10 (2 of 3 runs);
   it is the offscreen scene's synthetic pointer, not a regression. Judge a click capture by its
   frames.
+- **A new method on a service interface (`ArtistCatalog`, `PlaylistCatalog`, `MusicProvider`…)
+  is also passed on by the desktop's `RetryingProvider`**, which stands in for Spotify. A method
+  with a default answer compiles without it and quietly answers for the wrapper instead: Spotify's
+  albums and playlists in search were empty that way while YouTube Music's (not wrapped) showed.
+  Check it with a fake adapter that answers (`ProviderRecoveryTest`), not by reflection: Kotlin
+  gives the wrapper its own copy of every default, so a "declared" check passes either way.
+- **Every text field carries `Modifier.typing()`** (`ui/Keys.kt`). The desktop window's shortcuts
+  run on keys nothing inside took, and a text field takes only the character a key types, not
+  the key: without the mark, Space in a new field would pause the music as it typed a space. The
+  mark is also what lets a mouse press outside the field let go of it (`blurOnOutsideClick`).
+  Put it on the field's capsule when the capsule has buttons of its own (Search's clear), so a
+  press on them keeps the caret.
 - **Never open AWT's `FileDialog` (or anything else that runs `gtk_init`) inside Valen.** On this
   machine GTK 3's accessibility bridge aborts the JVM in `g_bus_get_sync` (SIGABRT under
   `atk_bridge_adaptor_init`), so the profile's "change picture" killed the app on every click.

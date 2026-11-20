@@ -83,6 +83,12 @@ class PlaybackCoordinator(
      * apart, so the taste never mistakes what the algorithm offered for what the person chose.
      */
     @Volatile private var queueGenerated = false
+
+    /**
+     * Songs in the queue that Valen put there to keep it going ([AppSettings.keepPlaying]), by
+     * key: like a generated list's, their listening counts as offered, not chosen.
+     */
+    private val offered: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     private var lastTickAt = 0L
 
     /** The list's own order while shuffle has it in another; null when not shuffled. */
@@ -188,6 +194,7 @@ class PlaybackCoordinator(
                 _index.value = at
                 playingFrom = saved.from
                 queueGenerated = saved.generated
+                offered.addAll(saved.offered)
                 unshuffled = saved.unshuffled?.takeIf { initial.shuffle }
                 resumeAtMs = saved.positionMs.coerceAtLeast(0)
                 _snapshot.value = PlayerSnapshot(
@@ -271,7 +278,7 @@ class PlaybackCoordinator(
                 // more than a couple of seconds for one tick (a suspended machine is not listening).
                 val heard = raw.track
                 if (heard != null && raw.isPlaying && !raw.isBuffering && lastTickAt > 0 && lent == null) {
-                    stats.count(heard, (now - lastTickAt).coerceIn(0, 2_000), playingFrom, queueGenerated)
+                    stats.count(heard, (now - lastTickAt).coerceIn(0, 2_000), playingFrom, queueGenerated || heard.key in offered)
                 }
                 lastTickAt = now
                 // The place in the song reaches disk now and then, so a crash loses seconds, not the song.
@@ -423,6 +430,8 @@ class PlaybackCoordinator(
         _snapshot.value = null
         playingFrom = null
         queueGenerated = false
+        offered.clear()
+        forgetKeepPlaying()
         unshuffled = null
         resumeAtMs = null
         radioFrom = null
@@ -569,6 +578,9 @@ class PlaybackCoordinator(
             synchronized(queueLock) {
                 playingFrom = from
                 queueGenerated = generated
+                // A new queue: what was found to follow the old one does not follow this one.
+                offered.clear()
+                forgetKeepPlaying()
                 val list = if (context.any { it.key == track.key }) context else context + track
                 if (_settings.value.shuffle && list.size > 1) {
                     unshuffled = list
@@ -624,7 +636,134 @@ class PlaybackCoordinator(
         },
     )
 
-    fun setRepeat(mode: RepeatMode) = updateSettings { it.copy(repeat = mode) }
+    fun setRepeat(mode: RepeatMode) {
+        updateSettings { it.copy(repeat = mode) }
+        // A queue that repeats never runs out; one that stops repeating may be near its end.
+        synchronized(queueLock) { if (mode == RepeatMode.OFF) findMoreToKeepPlaying() else forgetKeepPlaying() }
+    }
+
+    /** [AppSettings.keepPlaying]: on, songs like the queue's end are found to follow it; off, it stops. */
+    fun setKeepPlaying(on: Boolean) {
+        updateSettings { it.copy(keepPlaying = on) }
+        synchronized(queueLock) { if (on) findMoreToKeepPlaying() else forgetKeepPlaying() }
+    }
+
+    /**
+     * Songs like the last ones in the queue, found while its last songs play, to follow it when it
+     * runs out ([AppSettings.keepPlaying]). They are not in the queue yet: a song added now still
+     * goes before them, and the queue page shows them under it. Empty while there is no end near,
+     * the queue repeats, or a radio refills itself anyway.
+     */
+    private val _keepPlaying = MutableStateFlow<List<Track>>(emptyList())
+    val keepPlaying: StateFlow<List<Track>> = _keepPlaying.asStateFlow()
+    private var keepPlayingJob: Job? = null
+
+    /** The end of the queue [keepPlaying] was found for (its last songs' keys); another end makes it stale. */
+    private var keepPlayingFor: String? = null
+
+    /**
+     * Looks for songs to follow the queue when its end is near. Like a radio's refill: the artists
+     * of its last songs and those related to them, scored by the taste, none already queued.
+     * Called under [queueLock].
+     */
+    private fun findMoreToKeepPlaying() {
+        val settings = _settings.value
+        if (!settings.keepPlaying || settings.repeat != RepeatMode.OFF || radioFrom != null || lent != null) return
+        val list = _queue.value
+        if (list.isEmpty() || _index.value !in list.indices) return
+        if (list.size - 1 - _index.value > KEEP_PLAYING_LEFT) {
+            // Songs were added since: the end they were found for is far off again.
+            forgetKeepPlaying()
+            return
+        }
+        val end = list.takeLast(RADIO_SEED_SONGS)
+        val endKey = end.joinToString("|") { it.key }
+        if (endKey == keepPlayingFor) return
+        keepPlayingJob?.cancel()
+        keepPlayingFor = endKey
+        _keepPlaying.value = emptyList()
+        val artists = end.flatMap { artistsIn(it.artist) }.distinctBy(Taste::artistKey)
+        if (artists.isEmpty()) return
+        keepPlayingJob = scope.launch {
+            val spec = SmartSpec(sources = setOf(SmartSource.Artists), artists = artists, size = KEEP_PLAYING_SONGS, discovery = 0.6f)
+            val found = runCatching { mixer().build(spec, taste()) }.getOrDefault(emptyList())
+            synchronized(queueLock) {
+                if (keepPlayingFor != endKey) return@launch
+                val have = _queue.value.mapTo(HashSet()) { recordingKey(it.title, it.artist) }
+                _keepPlaying.value = found
+                    .filter { recordingKey(it.title, it.artist) !in have && canPlayNow(it) }
+                    .distinctBy { recordingKey(it.title, it.artist) }
+            }
+        }
+    }
+
+    /** Drops what was found to follow the queue, and any search for it still on its way. */
+    private fun forgetKeepPlaying() {
+        keepPlayingJob?.cancel()
+        keepPlayingJob = null
+        keepPlayingFor = null
+        _keepPlaying.value = emptyList()
+    }
+
+    /**
+     * The queue has run out: the songs found to follow it join it, and the first plays. If they are
+     * still being looked for, the last song waits on them and the music goes on once they are
+     * found (or stops, if none are). Null when there is nothing to go on with. Called under
+     * [queueLock].
+     */
+    private fun keepGoing(): Job? {
+        if (!_settings.value.keepPlaying || _settings.value.repeat != RepeatMode.OFF || lent != null) return null
+        if (_keepPlaying.value.isNotEmpty()) return joinKeepPlaying(at = 0)
+        findMoreToKeepPlaying()
+        val finding = keepPlayingJob?.takeIf { it.isActive } ?: return null
+        val endKey = keepPlayingFor
+        val queueThen = _queue.value
+        val indexThen = _index.value
+        return scope.launch {
+            finding.join()
+            val job = commands.withLock {
+                synchronized(queueLock) {
+                    // Only if nothing else was started meanwhile: the same queue, still at its end.
+                    val still = _queue.value === queueThen && _index.value == indexThen && keepPlayingFor == endKey
+                    if (!still || _keepPlaying.value.isEmpty()) null else joinKeepPlaying(at = 0)
+                }
+            }
+            job?.join()
+        }
+    }
+
+    /**
+     * [keepPlaying] joins the end of the queue, offered rather than chosen, and the one at [at]
+     * among them plays. Called under [queueLock].
+     */
+    private fun joinKeepPlaying(at: Int): Job? {
+        val more = _keepPlaying.value
+        if (at !in more.indices) return null
+        val list = _queue.value
+        more.forEach { offered += it.key }
+        _queue.value = list + more
+        unshuffled = unshuffled?.let { it + more }
+        keepPlayingJob = null
+        keepPlayingFor = null
+        _keepPlaying.value = emptyList()
+        return begin(list.size + at, skipUnplayable = true)
+    }
+
+    /** Leaves [track] out of what follows the queue (its row's remove, on the queue page). */
+    fun dropFromKeepPlaying(track: Track) {
+        synchronized(queueLock) { _keepPlaying.value = _keepPlaying.value.filterNot { it.key == track.key } }
+    }
+
+    /** A song of [keepPlaying] tapped on the queue page: they all join the queue, and it plays. */
+    suspend fun playFromKeepPlaying(track: Track) {
+        val job = commands.withLock {
+            synchronized(queueLock) {
+                val at = _keepPlaying.value.indexOfFirst { it.key == track.key }
+                if (at < 0) null else joinKeepPlaying(at)
+            }
+        }
+        job?.join()
+    }
 
     /**
      * Writes the queue and the place in it to the settings, so the next start shows the same song,
@@ -644,6 +783,7 @@ class PlaybackCoordinator(
             from = playingFrom,
             unshuffled = unshuffled,
             generated = queueGenerated,
+            offered = list.mapNotNull { t -> t.key.takeIf { it in offered } }.distinct(),
         )
         updateSettings { it.copy(session = session) }
     }
@@ -832,6 +972,7 @@ class PlaybackCoordinator(
      */
     private fun prepareNext(gen: Long) {
         refillRadio()
+        synchronized(queueLock) { findMoreToKeepPlaying() }
         val list = _queue.value
         if (list.isEmpty()) return
         val at = _index.value
@@ -949,7 +1090,9 @@ class PlaybackCoordinator(
         } else if (_settings.value.repeat != RepeatMode.OFF && _queue.value.any(::canPlayNow)) {
             return begin(0, skipUnplayable = true)
         } else {
-            // The end of the queue: the service is told to stop where it is (waited on off the lock).
+            // The end of the queue, unless songs like it are there to go on with.
+            keepGoing()?.let { return it }
+            // The service is told to stop where it is (waited on off the lock).
             if (auto) {
                 _index.value = _queue.value.lastIndex.coerceAtLeast(0)
                 _snapshot.value = _snapshot.value?.copy(isPlaying = false, positionMs = 0)
@@ -1406,6 +1549,8 @@ class PlaybackCoordinator(
     fun clearQueue() {
         synchronized(queueLock) {
         silence()
+        offered.clear()
+        forgetKeepPlaying()
         _queue.value = emptyList()
         _index.value = -1
         unshuffled = null
@@ -1441,6 +1586,12 @@ class PlaybackCoordinator(
         /** The last songs whose artists seed a refill, and how many songs it brings. */
         const val RADIO_SEED_SONGS = 5
         const val RADIO_REFILL_SONGS = 25
+
+        /** Songs to follow the queue are looked for once this few (or fewer) are left after the one playing. */
+        const val KEEP_PLAYING_LEFT = 2
+
+        /** How many songs are found to follow it, each time. */
+        const val KEEP_PLAYING_SONGS = 20
 
         /** How often the place in a playing song is written down. */
         const val SESSION_SAVE_MS = 10_000L

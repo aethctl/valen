@@ -50,6 +50,18 @@ object Motion {
     const val PouredOverScale = 0.965f
     const val PouredOverAlpha = 0.35f
 
+    /** A notebook's page turned onto the wall starts this far from flat (the Sound page's arrival). */
+    const val LeafDegrees = 72f
+
+    /**
+     * A part of Settings changing beside its index, like a slat of the page's shutter turning over:
+     * the open part tips away from the way you moved ([SlatOutMs]) and the next tips in from the
+     * other side ([SlatInMs], once the first is half gone), both up to [SlatDegrees].
+     */
+    const val SlatOutMs = 200
+    const val SlatInMs = 380
+    const val SlatDegrees = 24f
+
     /** Writing the tag: the whole name, stroke after stroke, at a marker's pace. */
     const val TagWriteMs = 1500
 
