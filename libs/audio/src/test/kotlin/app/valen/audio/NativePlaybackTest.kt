@@ -331,4 +331,23 @@ class NativePlaybackTest {
         assertNotNull(player.played?.cacheKey)
         scope.cancel()
     }
+
+    @Test
+    fun `resolved address cache evicts old entries after the limit`() = runTest {
+        val requests = mutableMapOf<String, Int>()
+        var tick = 0L
+        val playback = NativePlayback(FakePlayer(), backgroundScope, clock = { ++tick }) { id, _ ->
+            requests[id] = (requests[id] ?: 0) + 1
+            ResolvedStream("https://example.test/$id")
+        }
+
+        for (id in 0 until 33) {
+            playback.warm(track.copy(id = "$id", uri = "soundcloud:track:$id"))
+        }
+        playback.warm(track.copy(id = "32", uri = "soundcloud:track:32"))
+        playback.warm(track.copy(id = "0", uri = "soundcloud:track:0"))
+
+        assertEquals(1, requests["32"])
+        assertEquals(2, requests["0"], "oldest resolved address should have been evicted")
+    }
 }
