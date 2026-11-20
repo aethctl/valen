@@ -1,6 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 package app.valen.ui.screens
 
+import kotlin.math.abs
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.EnterExitState
 import app.valen.ui.theme.Motion
 import app.valen.ui.components.ScrollPage
 import app.valen.ui.profile.forgetPicture
@@ -184,6 +191,13 @@ private fun WideSettings(
 ) {
     val chrome = LocalChrome.current
     val reduced = LocalReducedMotion.current
+    // Which way the index last moved: the part turns over with it.
+    val down = remember { mutableStateOf(true) }
+    var was by remember { mutableStateOf(open) }
+    if (was != open) {
+        down.value = parts.indexOf(open) >= parts.indexOf(was)
+        was = open
+    }
     Box(
         contentAlignment = Alignment.TopCenter,
         modifier = Modifier.fillMaxSize().padding(start = chrome.start),
@@ -212,17 +226,44 @@ private fun WideSettings(
                         if (reduced) {
                             fadeIn(Motion.fade()) togetherWith fadeOut(Motion.fade())
                         } else {
-                            // The new part rises a little as the old one sinks away.
-                            (fadeIn(Motion.enter()) + slideInVertically(Motion.enter()) { it / 40 }) togetherWith
-                                fadeOut(Motion.exit())
-                        }
+                            // Turned over like a slat of the page's shutter, below.
+                            EnterTransition.None togetherWith ExitTransition.KeepUntilTransitionsFinished
+                        }.using(SizeTransform(clip = false))
                     },
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     label = "settingsPart",
                 ) { part ->
+                    // The open part tips away from the way the index moved, and the next tips in from
+                    // the other side once it is half gone, as one slat turning over.
+                    val tip by transition.animateFloat(
+                        transitionSpec = {
+                            if (targetState == EnterExitState.Visible) {
+                                tween(Motion.SlatInMs, delayMillis = Motion.SlatOutMs / 2, easing = Motion.Enter)
+                            } else {
+                                tween(Motion.SlatOutMs, easing = Motion.Exit)
+                            }
+                        },
+                        label = "slat",
+                    ) { state ->
+                        when (state) {
+                            EnterExitState.PreEnter -> -1f
+                            EnterExitState.Visible -> 0f
+                            EnterExitState.PostExit -> 1f
+                        }
+                    }
                     // Each part arrives like a page: its title rises letter by letter, its groups after it.
                     CompositionLocalProvider(LocalPageEntrance provides rememberPageEntrance(part)) {
-                        ScrollPage(key = "settings:" + part.name, modifier = Modifier.fillMaxSize()) {
+                        ScrollPage(
+                            key = "settings:" + part.name,
+                            modifier = Modifier.fillMaxSize().graphicsLayer {
+                                if (!reduced) {
+                                    rotationX = tip * (if (down.value) 1f else -1f) * Motion.SlatDegrees
+                                    alpha = 1f - abs(tip)
+                                    transformOrigin = TransformOrigin(0.5f, 0.25f)
+                                    cameraDistance = 16f * density
+                                }
+                            },
+                        ) {
                             KineticText(
                                 text = part.title,
                                 style = MaterialTheme.typography.headlineLarge,
@@ -517,11 +558,27 @@ private fun PlaybackPart(coordinator: PlaybackCoordinator) {
     )
 
     Spacer(Modifier.height(Space.step8))
-    SectionHeader(title = "Lyrics", modifier = Modifier.arrive(4, ItemArrival.Swing))
+    SectionHeader(title = "The queue", modifier = Modifier.arrive(4, ItemArrival.Swing))
+    Group(
+        listOf(
+            {
+                SwitchRow(
+                    title = "Keep playing",
+                    body = "When the queue runs out, songs like its last ones play on. Off, the music stops with the last song.",
+                    checked = settings.keepPlaying,
+                    onChange = coordinator::setKeepPlaying,
+                )
+            },
+        ),
+        modifier = Modifier.arrive(5),
+    )
+
+    Spacer(Modifier.height(Space.step8))
+    SectionHeader(title = "Lyrics", modifier = Modifier.arrive(6, ItemArrival.Swing))
     Note(
         "Words come from Lyprio when it is set up, then from Spotify when you are signed in, " +
             "then from LRCLIB.",
-        Modifier.arrive(5),
+        Modifier.arrive(7),
     )
     Group(
         listOf(
@@ -550,7 +607,7 @@ private fun PlaybackPart(coordinator: PlaybackCoordinator) {
                 )
             },
         ),
-        modifier = Modifier.arrive(6),
+        modifier = Modifier.arrive(8),
     )
 }
 
