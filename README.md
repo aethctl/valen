@@ -44,27 +44,15 @@ Valen's aesthetics arent just a regular music player, the entire UI is designed 
 - **Colour that follows the album art.** Choose between the default black and pink pallete or theme the app around the album art.
 - **Layered visuals** Floating playback controls, translucent dock and navigation UI that reacts to your cursors movement.
 - **Fluid animations** Pages glide, move, roll and settle into place. The album art is interactive within valen reacting to your cursor instead of being stationary.
-- **1 app, 2 experiences** The same visual identity on Linux desktops and Android without forcing a desktop layout onto a phone
+- **1 app, 2 experiences** The same visual identity on Linux desktops and Android without forcing a desktop layout onto a phone.
+- **Synced and annotated lyrics** Aesthetically annotated and synced by syllable lyrics.
+- **Advanced EQ** Choose between 16 preset EQ options or manually tweak it to what you need.
+
 
 ![Valen's full desktop now-playing view with a taped album cover and floating controls](docs/readme/screens/now-playing-desktop.jpg)
-
-## get closer to the music.
-
-Lyrics arent an afterthought tucked under a cover. Valen makes the lyrics match the animated UI with time synced lines and word level timing whenever the source provides it
-
-![Valen's illustrated lyrics experience](docs/readme/lyrics.svg)
-
-
-## the songs stay with you.
-
-A music player should remember more than the last thing you pressed play on.
-
-Valen keeps a local listening history and then builds personal recommendations from what you actually finish or skip and offers mixes and radio for when you want to discover something new
-
-Then there's **Your week**, a visual little recap of the songs and artists that followed you around.
-
 ![Valen's illustrated weekly listening recap](docs/readme/week.svg)
 ![Valen's EQ illustration](docs/readme/valen-sound-animated.svg)
+
 
 ## the details
 
