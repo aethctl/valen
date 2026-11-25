@@ -16,7 +16,7 @@
 Valen is a music player made for everyday use. Not another generic audio player with a sidebar, Valen is made to be beautiful but also usable and lightweight
 The entire app can be themed from the colours on the album art so every song or podcast you listen to completely changes the UI of Valen
 
-<img width="2220" height="1341" alt="image" src="https://github.com/user-attachments/assets/3dc4cfd3-6896-4acd-b1fb-65c1fdc7d153" />
+<img width="2223" height="1345" alt="image" src="https://github.com/user-attachments/assets/93c641e1-3017-4447-8a1a-06f9fe9501ac" />
 
 <table>
   <tr>
