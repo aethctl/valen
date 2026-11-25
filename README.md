@@ -24,10 +24,10 @@ The entire app can be themed from the colours on the album art so every song or 
        <img width="2219" height="1337" alt="image" src="https://github.com/user-attachments/assets/2ffec27f-373a-47cb-b58d-f4bee92e87c4" />
       <td>
        <td width="33.33%">
-         <img width="1333" height="745" alt="image" src="https://github.com/user-attachments/assets/0a31a9b2-d04a-4a88-b0a5-ab4107ad5be7" />
+       <img width="2220" height="1342" alt="image" src="https://github.com/user-attachments/assets/2e087903-8623-4fa7-b56f-3f2b0f8f9a44" />
       </td>
         <td width="33.33%">
-          <img width="1333" height="745" alt="image" src="https://github.com/user-attachments/assets/96ccc2ce-f8e7-4176-8dc6-1742de6c71eb" />
+          <img width="2226" height="1345" alt="image" src="https://github.com/user-attachments/assets/fd72276c-4c80-412c-bc63-7771e8d50f4d" />
        </tr>
 </table>
 
