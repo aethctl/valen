@@ -21,7 +21,7 @@ The entire app can be themed from the colours on the album art so every song or 
 <table>
   <tr>
     <td width="33.33%">
-      <img width="1333" height="745" alt="image" src="ttps://github.com/user-attachments/assets/593245dd-c683-4385-b89d-f70536d7375d" />
+       <img width="2219" height="1337" alt="image" src="https://github.com/user-attachments/assets/2ffec27f-373a-47cb-b58d-f4bee92e87c4" />
       <td>
        <td width="33.33%">
          <img width="1333" height="745" alt="image" src="https://github.com/user-attachments/assets/0a31a9b2-d04a-4a88-b0a5-ab4107ad5be7" />
