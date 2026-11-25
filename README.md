@@ -50,6 +50,7 @@ Valen keeps a local listening history and then builds personal recommendations f
 Then there's **Your week**, a visual little recap of the songs and artists that followed you around.
 
 ![Valen's illustrated weekly listening recap](docs/readme/week.svg)
+![Valen's EQ illustration](docs/readme/valen-sound-animated.svg)
 
 ## the details
 
