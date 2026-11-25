@@ -79,9 +79,9 @@ Valen's aesthetics arent just a regular music player, the entire UI is designed 
 
 ## build valen
 
-Valen is **still in alpha development**. This is a look at where it's heading, not a promise of a polished release today.
+Valen is **still in alpha development** so not everything is super polished and bug free.
 
-The project is built with **Kotlin and Compose Multiplatform**. For local development you'll need **JDK 21**. The Android build also requires an Android SDK.
+Valen is built with **Kotlin and Compose Multiplatform**. For local development you will need **JDK 21** and the Android build also requires an Android SDK.
 
 ```bash
 git clone https://github.com/dodo986/valen.git
